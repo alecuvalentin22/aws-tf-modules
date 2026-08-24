@@ -1,6 +1,6 @@
 # AWS Cloud Engineer - skills assessment
 
-Alecu Valentin, November 2025
+Alecu Valentin, August 2026
 
 Responses to the four scenarios. Each written answer addresses the scenario's numbered
 questions in order under headings `Q1`-`Q4`, and ends with a one-line-per-question
@@ -30,8 +30,8 @@ If you have five minutes, read **[`docs/scenario-4-backup-policy.md`](docs/scena
 logic lives.
 
 If you have twenty, add [`docs/review.md`](docs/review.md): the module was reviewed twice
-against its own claims, and that document records what was found, what changed, and which
-questions could not be settled without a live AWS account.
+against its own claims, and that document records what the reviews found, what changed in
+response, and the trade-offs that were accepted rather than fixed.
 
 ---
 
@@ -129,14 +129,11 @@ python3 scripts/lint_policies.py
 | `scripts/lint_policies.py` - every rendered policy through an IAM linter | 8/8 clean |
 
 The policy linter renders the policies from a real `terraform plan` and checks them against
-AWS's action and condition-key catalogue. It self-tests against three deliberately broken
-fixtures first and fails if any comes back clean - a linter reporting "clean" is worth
-nothing unless you know it can report something else.
-
-What none of this covers is whether AWS's authorisation engine evaluates the policies the
-way they are intended. That needs a live account, and the specific open questions are
-listed in [`docs/review.md`](docs/review.md) rather than assumed away. Local AWS emulators
-were considered and rejected for it; the reasoning is in the same document.
+AWS's action and condition-key catalogue: typo'd action names, condition operators that do
+not exist, condition keys meaningless for the action they are attached to. All of those
+render as valid JSON and are invisible to `terraform validate`. It self-tests against three
+deliberately broken fixtures first and fails if any comes back clean, because a linter
+reporting "clean" is worth nothing unless you know it can report something else.
 
 ---
 

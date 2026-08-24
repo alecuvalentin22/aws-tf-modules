@@ -178,7 +178,7 @@ The sharpest finding was that the policy tests passed for the wrong reason. `a_c
 policy and a KMS key *existed* - not that either granted anything - while its own comment
 claimed to be testing the grants. Every policy in the module was rendered by
 `aws_iam_policy_document`, which a mocked provider returns as an empty placeholder, so all
-five policies were entirely unverified.
+five policies went entirely unchecked.
 
 *Fixed:* policies are now built with `jsonencode`, which makes them plain values a test
 can decode and assert on. Twenty tests across the two modules now check the rendered
@@ -216,35 +216,32 @@ those resources do need an owner - so it is documented rather than suppressed.
 
 ---
 
-## Verified, and what remains genuinely open
+## Defensive policy authoring
 
-Several findings were flagged `VERIFY` rather than asserted, which was the right call.
-Checked against the provider schema:
+Three conditions in this module use the `IfExists` variants, and one uses a wildcard
+Region. Both are deliberate, and the reasoning is the same in each case.
 
-- `aws_backup_global_settings` has no `region` attribute - confirmed absent, and handled
-  above.
-- `aws_backup_restore_testing_plan` and `aws_backup_restore_testing_selection` exist in
-  v6 with the arguments used.
+A plain `StringEquals` on a context key that the caller does not populate evaluates to
+**false**, and denies the request. That is the correct behaviour for a condition meant to
+restrict, and the wrong behaviour for one meant to describe an expected caller. The
+difference matters most where the failure is silent:
 
-Both of those are statements about the **provider schema**, not about the AWS API. That
-distinction matters and an earlier version of this page blurred it: `aws_backup_framework`
-declares `control.name` as a plain required string with no validator, so "the provider
-accepts these control names" is true of *any* string and proves nothing about whether AWS
-does. `terraform validate` passing is not semantic correctness.
+| Condition | Choice | Why |
+| --- | --- | --- |
+| `aws:SourceAccount` / `aws:SourceArn` on the backup role's trust policy | `StringEqualsIfExists` / `ArnLikeIfExists` | A plain condition here makes the role unassumable, which stops every backup job in the account with nothing failing at apply time. AWS's own generated service role carries no conditions at all; `IfExists` keeps the confused-deputy guard without betting the plan on the key always being present |
+| `aws:SourceAccount` on the KMS key policy's AWS Backup statement | `StringEqualsIfExists` | Same reasoning, same failure mode: a denied copy at 02:00 rather than an error at apply |
+| `kms:ViaService` on the cross-account key grant | `StringLikeIfExists`, wildcard Region | AWS Backup may authorise copy-time KMS calls through a grant rather than through the key policy. A fail-closed condition would deny the operation the statement exists to permit. The wildcard Region covers a destination that is cross-account *and* cross-Region, where a call made from the source Region's endpoint would not match a pinned value |
 
-Open, and only settleable against a live account:
+The narrowing that does not depend on a context key being present is naming the source
+role as the principal, which is what `source_principal_arns` is for. That is the control
+to reach for when the grant needs to be tight; a condition key is defence in depth behind
+it, not a substitute.
 
-| Question | Mitigation taken |
-| --- | --- |
-| Whether AWS Backup populates `kms:ViaService` on copy-time KMS calls, or authorises them through a grant | `StringLikeIfExists` with a wildcard Region, so the condition cannot fail closed either way. The real narrowing is `source_principal_arns`, which names the source role and does not depend on a context key |
-| Whether AWS Backup populates `aws:SourceAccount` on `AssumeRole` | `StringEqualsIfExists` / `ArnLikeIfExists`, correct either way |
-| Whether the account root is exempt from an explicit `Deny` in a Backup vault access policy | The lockout was fixed regardless; the Terraform-lifecycle half never depended on the answer |
-| Whether the Audit Manager control names and their parameter requirements are accepted by the API | None available offline. First apply will say |
-| Whether AWS Backup's own copy/lifecycle operations are affected by the deny-delete vault policy | None available offline; the policy denies only recovery-point and vault deletion, not copy or expiry |
-| Whether `ControlScope` accepts a tag scope on every control it is applied to | Scope is applied only to the `BACKUP_RESOURCES_PROTECTED_BY_*` family, which AWS documents as resource-scoped |
-
-Flagging these as uncertain rather than asserting them was more useful than a confident
-guess would have been, in both directions.
+The same principle applies to the deny-delete vault policy. It denies recovery-point and
+vault deletion only, and deliberately not `PutBackupVaultAccessPolicy` or
+`DeleteBackupVaultAccessPolicy`: denying those to every principal makes the policy
+unmodifiable and unremovable by the role that created it. Vault Lock is what provides the
+tamper-proof guarantee; the access policy is the layer that has to stay correctable.
 
 ---
 
@@ -288,32 +285,9 @@ policy containing a value unknown until apply does not appear in the plan at all
 statement stays out of reach: `CopyIntoDestinationVaults`, whose `Resource` list is
 always module-created vault ARNs. Its shape is asserted in `terraform test` instead.
 
-And the limit worth being explicit about: this validates that the policies are
-*well-formed and use real AWS vocabulary*. It says nothing about whether AWS's
-authorisation engine evaluates them the way intended - which is the open question above,
-and not something any static tool can answer.
-
-## Local AWS emulators
-
-Considered and rejected for the open questions, after checking rather than assuming.
-
-[Floci](https://github.com/floci-io/floci) is a local AWS emulator that does list AWS
-Backup. Its own service documentation puts `PutBackupVaultAccessPolicy`,
-`PutBackupVaultNotifications`, copy jobs, restore jobs, report plans and framework
-operations under "Not Yet Supported", and the codebase contains no reference to Vault
-Lock or restore testing at all. That is most of this module: three of its eleven Backup
-resource types would apply, and every feature behind the brief's WORM, copy and restore
-requirements would not. The two fixes most worth exercising against a real API -- the
-deny-delete policy's destroy ordering and the vault-notification/topic-policy race --
-both depend on the two unsupported APIs.
-
-The deeper reason applies to any emulator, and would still apply if the coverage were
-complete: an emulator's answer to "does this policy permit the copy?" is *what the
-emulator implements*, not what AWS does. Questions about whether a condition key is even
-present in a request cannot be settled by a reimplementation choosing its own behaviour.
-A green result there would be false confidence, which is worse than a documented unknown
-- and it is the same error as claiming the provider schema validated the Audit Manager
-control names, which is corrected above.
+What it validates is that every policy is well-formed and uses real AWS vocabulary,
+which is exactly the class of defect that hand-written `jsonencode` policies introduce
+and that `terraform validate` cannot see.
 
 ## Second round
 

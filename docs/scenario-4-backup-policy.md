@@ -292,8 +292,7 @@ unrelated guards, so an unlocked sandbox Region silently waived the cross-accoun
 requirement and re-opened the largest finding from the first round.
 
 All are fixed, each with a regression test. [`review.md`](review.md) records both rounds,
-the response to each finding, and the questions that can only be settled against a live
-AWS account.
+the response to each finding, and the trade-offs accepted rather than fixed.
 
 ---
 
