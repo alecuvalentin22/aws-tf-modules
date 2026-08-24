@@ -191,8 +191,8 @@ of the order these usually get implemented.
 
 ### 1. Synthetic canaries - the only checks that prove GitLab works
 
-Instance-level metrics tell you the box is alive. They do not tell you a developer can
-push. CloudWatch Synthetics canaries running from outside the instance:
+Instance-level metrics establish that the box is alive. They do not establish that a
+developer can push. CloudWatch Synthetics canaries running from outside the instance:
 
 | Canary | Frequency | What it proves |
 | --- | --- | --- |
@@ -222,7 +222,7 @@ load balancer turns a small problem into an outage.
 Use `/-/readiness` for the target group. The trap is `?all=1`: it probes every
 dependency, so a transient database slowdown fails the check on every healthy node at
 once and the load balancer drains the entire pool. The failure is correlated by
-construction, which is exactly what you do not want from a health check.
+construction, which is precisely the wrong property for a health check.
 
 `/-/health` errs the other way. It will report healthy on a node whose database
 connection is gone, so traffic keeps arriving at an instance that cannot answer.

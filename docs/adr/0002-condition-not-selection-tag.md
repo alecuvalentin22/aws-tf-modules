@@ -62,7 +62,7 @@ Three properties make this the most dangerous kind of bug:
    way to find out that a control has not been enforced for a year.
 
 The `Owner` tag requirement is not decoration. It is what makes a backed-up resource
-attributable during a restore: knowing who to call about a database you are restoring
+attributable during a restore: knowing who to call about a database under restoration
 at 3am is the difference between a fast recovery and a slow one.
 
 ## Consequences

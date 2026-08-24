@@ -39,8 +39,8 @@ cannot be raised.
 | Quarterly | 100 | **~6 years** |
 | Monthly | 300 | ~2 years |
 
-This inverts the usual order of the conversation. Normally you agree a rotation
-period and then implement it. Here the rotation period decides whether the existing
+This inverts the usual order of the conversation. Normally a rotation period is agreed
+and then implemented. Here the rotation period decides whether the existing
 key estate survives the policy at all, so it has to be settled **before** any
 implementation work starts.
 

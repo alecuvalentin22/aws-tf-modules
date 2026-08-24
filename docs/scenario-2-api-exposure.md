@@ -226,8 +226,8 @@ removes the Lambda from the request path entirely).
 | 3 | Dual-exposure APIs -> private + CloudFront VPC origin | Medium |
 | 4 | Per-team distributions, per-API authorizers | Medium |
 
-Phase 0 first, always. The current architecture cannot answer "how much bypass traffic
-are we receiving?", and that number determines how urgent phases 1-3 are.
+Phase 0 first, always. The current architecture cannot answer how much bypass
+traffic is arriving, and that number determines how urgent phases 1-3 are.
 
 ---
 
@@ -354,7 +354,7 @@ changes the ranges, which is the maintenance cost of this tier.
 
 **And it is weaker than it looks even when written correctly**: it proves the request
 came from **a** CloudFront distribution, not from **ours**. An attacker can put their
-own distribution in front of your regional endpoint and satisfy it. Worth having as a
+own distribution in front of the regional endpoint and satisfy it. Worth having as a
 layer stacked on Tier 2, never on its own.
 
 ### Tier 4 - Detection

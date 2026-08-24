@@ -140,7 +140,7 @@ whether or not it met target.
 
 ---
 
-## Things that will bite you
+## Pitfalls
 
 A compliance-mode Vault Lock refuses deletion. If you are trying to clean up
 after a test restore and the recovery points will not delete, that is the lock

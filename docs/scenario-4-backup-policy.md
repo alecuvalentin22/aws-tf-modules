@@ -44,8 +44,8 @@ requirement does nothing at all. `condition` entries are evaluated with **AND**,
 which is what the requirement asks for.
 
 This is the single most consequential correctness decision in the module, it is
-invisible in a `terraform plan` diff, and it fails in the safe-looking direction: you
-back up *more* than intended, so nothing breaks and nobody notices. Full reasoning in
+invisible in a `terraform plan` diff, and it fails in the safe-looking direction: *more*
+is protected than intended, so nothing breaks and the discrepancy goes unnoticed. Full reasoning in
 [ADR-0002](adr/0002-condition-not-selection-tag.md); asserted by a test in
 `tests/defaults.tftest.hcl`, including an assertion that `selection_tag` is not used
 at all.
@@ -131,7 +131,7 @@ then flip. [ADR-0001](adr/0001-vault-lock-compliance-mode.md).
 `aws_backup_restore_testing_plan` restores a real recovery point on a schedule, records
 whether it worked and how long it took, and cleans up afterwards.
 
-Nothing else in this module tells you whether the data can be read back. Vault Lock
+Nothing else in this module establishes whether the data can be read back. Vault Lock
 proves the recovery points still exist; cross-account copy proves they exist somewhere
 else; only a restore proves they are usable. It is also what turns an RTO from a design
 claim into a measured number.
@@ -144,7 +144,7 @@ in another Region.
 The **cross-account** copy is the exception, and the reason is structural rather than an
 oversight: it lives in an account this module has no credentials for. Testing it means
 running a restore testing plan in the backup account, as part of that account's own
-deployment. That is called out in the runbook because it is the copy you would reach for
+deployment. That is called out in the runbook because it is the copy most likely to be reached for
 during a ransomware incident, the worst one to be restoring from for the first time.
 
 ---

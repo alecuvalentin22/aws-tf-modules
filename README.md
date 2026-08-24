@@ -13,24 +13,26 @@ summary.
 | 3 | Resilience and monitoring - GitLab | [`docs/scenario-3-gitlab-resilience.md`](docs/scenario-3-gitlab-resilience.md) | [`modules/gitlab-observability`](modules/gitlab-observability) |
 | 4 | Backup policy | [`docs/scenario-4-backup-policy.md`](docs/scenario-4-backup-policy.md) | [`modules/backup-policy`](modules/backup-policy) |
 
-Scenario 4 is the one the brief asks for a module, and it is where most of the effort
-went. Scenarios 1-3 also have code, because in each of them the central claim is easier
-to check than to argue: that the managed Config rule cannot answer the question, that a
-private API removes the bypass rather than blocking it, and that the alarms worth having
-are the ones treating silence as failure.
+Scenario 4 is the scenario for which the brief requests a module, and it received the
+majority of the effort. Scenarios 1-3 are also accompanied by code, because in each the
+central claim is more readily demonstrated than argued: that the managed Config rule
+cannot answer the question posed, that a private API removes the bypass rather than
+blocking it, and that the alarms worth having are those which treat silence as failure.
 
 ---
 
-## Where to start
+## Reading order
 
-If you have five minutes, read **[`docs/scenario-4-backup-policy.md`](docs/scenario-4-backup-policy.md)**
-- it explains the five decisions in the module that are worth defending - and then look at
+The design notes for the backup module are in
+[`docs/scenario-4-backup-policy.md`](docs/scenario-4-backup-policy.md), which sets out the
+five decisions in the module that most warrant scrutiny.
+
+The correctness logic itself is in
 [`modules/backup-policy/plan.tf`](modules/backup-policy/plan.tf) and
-[`modules/backup-policy/locals.tf`](modules/backup-policy/locals.tf), where the correctness
-logic lives.
-
-If you have twenty, read `plan.tf` and `variables.tf`. The preconditions are where the
-arguments are.
+[`modules/backup-policy/locals.tf`](modules/backup-policy/locals.tf). The input contract
+and the guardrails that enforce it are in
+[`modules/backup-policy/variables.tf`](modules/backup-policy/variables.tf); the
+preconditions there carry the reasoning behind each constraint.
 
 ---
 
@@ -49,9 +51,9 @@ arguments are.
 
 ---
 
-## Three things in the backup module worth a look
+## Design decisions in the backup module
 
-It refuses configurations that AWS accepts and then fails on nightly.
+**Plan-time rejection of configurations AWS accepts and then fails on nightly.**
 A Vault Lock enforces its retention window *at job time*, not at apply time. A plan whose
 `delete_after` falls outside a destination's window applies cleanly, reports success, and
 then fails every night in production, and on a compliance lock the window cannot be
@@ -60,24 +62,25 @@ widened to fix it. The module checks every `(rule, destination, retention)` trip
 AWS constraints get the same treatment.
 [ADR-0003](docs/adr/0003-plan-time-retention-validation.md)
 
-Selection uses `condition`, not `selection_tag`.
+**Selection uses `condition`, not `selection_tag`.**
 AWS Backup evaluates multiple `selection_tag` blocks with OR, so `ToBackup=true` **AND**
 `Owner=<owner>` written that way accepts resources with no owner at all. It is invisible
-in a plan diff and fails in the direction that breaks nothing: you back up more than
-intended, so no job fails and nobody notices until an audit.
+in a plan diff, and it fails in the direction that breaks nothing: more resources are
+protected than intended, so no job fails and the discrepancy surfaces only at audit.
 [ADR-0002](docs/adr/0002-condition-not-selection-tag.md)
 
-It scales past the three vaults in the brief.
+**The copy topology is a map rather than a fixed set of locations.**
 Terraform cannot iterate over provider configurations, which is why modules like this are
 usually hard-wired to a fixed set of locations, with the KMS key, the lock and the vault
 policy copy-pasted per location. Using the AWS provider v6 per-resource `region` argument,
 copy destinations are a map. Adding a Region is an entry, not a provider alias and a
-copy of every resource. A test runs the module with five destinations across five Regions.
+copy of every resource. A test exercises the module with five destinations across five
+Regions.
 [ADR-0004](docs/adr/0004-module-composition-and-account-boundaries.md)
 
 ---
 
-## Running it
+## Running the tests
 
 Terraform `>= 1.9`, AWS provider `>= 6.0, < 7.0`. The v6 floor is deliberate: the
 per-resource `region` argument is what makes the copy topology a map.
@@ -93,24 +96,24 @@ done
 
 | Module | Tests |
 | --- | --- |
-| `backup-policy` | 63 |
+| `backup-policy` | 64 |
 | `backup-policy/modules/backup-vault` | 20 |
 | `api-private-edge` | 27 |
 | `gitlab-observability` | 20 |
 | | **131** |
 
-No AWS account or credentials are needed. Every test runs against `mock_provider`,
-which is what makes them usable as a required check rather than a nightly job someone
-turns off.
+No AWS account or credentials are required. Every test runs against `mock_provider`,
+which is what makes the suite usable as a required check on a pull request rather than a
+scheduled job that is eventually disabled.
 
-The Lambda supporting scenario 1 tests the same way:
+The Lambda supporting scenario 1 is tested the same way:
 
 ```bash
 python3 -m unittest discover -s lambdas/kms-rotation-compliance/tests \
                              -t lambdas/kms-rotation-compliance
 ```
 
-Optionally, the policy linter, needs `pip install parliament`:
+The policy linter is optional and requires `pip install parliament`:
 
 ```bash
 python3 scripts/lint_policies.py
@@ -118,7 +121,7 @@ python3 scripts/lint_policies.py
 
 ---
 
-## What has actually been verified
+## Verification
 
 | Check | Status |
 | --- | --- |
@@ -131,8 +134,9 @@ The policy linter renders the policies from a real `terraform plan` and checks t
 AWS's action and condition-key catalogue: typo'd action names, condition operators that do
 not exist, condition keys meaningless for the action they are attached to. All of those
 render as valid JSON and are invisible to `terraform validate`. It self-tests against three
-deliberately broken fixtures first and fails if any comes back clean, because a linter
-reporting "clean" is worth nothing unless you know it can report something else.
+deliberately broken fixtures first and fails if any comes back clean, since a linter
+reporting "clean" carries no information unless it is known to be capable of reporting
+something else.
 
 ---
 
@@ -149,17 +153,18 @@ docs/
   scenario-4-backup-policy.md       Design notes for the module
   adr/                              Four decision records
 
-modules/backup-policy/              Scenario 4. The build.
+modules/backup-policy/              Scenario 4: the module the brief asks for
   modules/backup-vault/             Leaf module: one vault + key + lock + policy
   examples/{minimal,complete}/      One account; and the full two-account topology
-  tests/                            63 tests (20 more in the submodule)
+  tests/                            64 tests (20 more in the submodule)
 
 modules/api-private-edge/           Scenario 2: private API through PrivateLink,
                                     split-horizon DNS, CloudFront front door
-modules/gitlab-observability/       Scenario 3: canaries and the alarms that matter
+modules/gitlab-observability/       Scenario 3: synthetic canaries and the alarms
+                                    whose silence indicates failure
 
 lambdas/kms-rotation-compliance/    Scenario 1, Q3: the custom AWS Config rule, with
-                                    36 unit tests that need no boto3 and no credentials
+                                    36 unit tests requiring neither boto3 nor credentials
 
 runbooks/backup-restore.md          Which of the three copies to restore from, and why
                                     that choice is not interchangeable
@@ -172,7 +177,7 @@ scripts/lint_policies.py            Renders and lints every policy the backup mo
 
 ## Conventions
 
-- Comments explain **why**, not what. The Terraform already says what.
+- Comments explain **why**, not what; the Terraform already states what.
 - All identifiers, domains and account IDs are neutral placeholders (`example.com`,
   `111111111111`).
 - Every guardrail has a test that feeds it a bad config and asserts the refusal.

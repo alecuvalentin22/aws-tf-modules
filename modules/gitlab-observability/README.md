@@ -37,8 +37,8 @@ module takes an S3 location rather than packaging them.
 
 ## What it watches, in order of what actually catches breakage
 
-1. Synthetic canaries. Instance metrics tell you the box is alive. They do not
-tell you a developer can push. A `git clone` canary is the only check that exercises
+1. Synthetic canaries. Instance metrics establish that the box is alive. They do
+not establish that a developer can push. A `git clone` canary is the only check that exercises
 Gitaly, repository storage, authentication and the network path in one go, which is
 the real user journey. Run it over **both** HTTPS and SSH: they are separate failure
 domains, and an SSH-only outage is invisible to every HTTPS check.
