@@ -118,24 +118,24 @@ Two changes, and the second is what makes the first cheap:
 ```
                  EXTERNAL CALLER                    INTERNAL CALLER
                  (customer, broker)                 (service in the VPC)
-                        │                                   │
-                        ▼                                   │
-              public DNS: api.example.com                   │
-                        │                                   ▼
-                        ▼                        private zone: api.example.com
-                   CloudFront                                │
-                 Shield Advanced                              ▼
+                        |                                   |
+                        v                                   |
+              public DNS: api.example.com                   |
+                        |                                   v
+                        v                        private zone: api.example.com
+                   CloudFront                                |
+                 Shield Advanced                              v
                  global WAFv2                        VPC interface endpoint
-                        │                              (PrivateLink)
-                        ▼                                    │
-                  regional WAF                               │
-                        │                                    │
-                        └──────────────┬─────────────────────┘
-                                       ▼
+                        |                              (PrivateLink)
+                        v                                    |
+                  regional WAF                               |
+                        |                                    |
+                        +--------------+---------------------+
+                                       v
                           API Gateway  (PRIVATE)
                        resource policy: this VPCE only
-                                       │
-                                       ▼
+                                       |
+                                       v
                          Lambda / internal ALB -> ECS
 ```
 
@@ -151,7 +151,7 @@ whole trick.
 | API team | Endpoint type + resource policy. No application change. |
 
 Each cutover is a DNS change. If anything looks wrong, it is reverted in minutes by
-removing a record - no redeploy, no rollback of application code. That property is
+removing a record, no redeploy, no rollback of application code. That property is
 what makes it realistic to migrate a large number of APIs without a change freeze.
 
 ### APIs that must serve both audiences
@@ -159,8 +159,8 @@ what makes it realistic to migrate a large number of APIs without a change freez
 Keep **one private API** with two front doors:
 
 ```
-   External:  CloudFront ──► CloudFront VPC origin ──► private ALB ──► private API GW
-   Internal:  VPC interface endpoint ──────────────────────────────► private API GW
+   External:  CloudFront --> CloudFront VPC origin --> private ALB --> private API GW
+   Internal:  VPC interface endpoint ------------------------------> private API GW
 ```
 
 CloudFront VPC origins (or a VPC Lattice / ALB path) let CloudFront reach into the
@@ -169,12 +169,12 @@ attachment and one deployment.
 
 **The security property this buys is the important part:** once the API is `PRIVATE`,
 the public `execute-api` endpoint does not exist. The bypass in Q1.1 is not blocked by
-a rule that someone could misconfigure - it is structurally impossible. That is a
+a rule that someone could misconfigure. It is structurally impossible. That is a
 categorically stronger guarantee than any mitigation in Q4.
 
 ### The cheaper stepping stone, and its cost
 
-Publishing the same OpenAPI definition twice - once `PRIVATE`, once `REGIONAL` - is
+Publishing the same OpenAPI definition twice, once `PRIVATE`, once `REGIONAL` - is
 less work and lets internal traffic go private immediately. But the regional endpoint
 stays public, so **every bypass mitigation in Q4 remains mandatory**, and the estate
 now has two deployments to keep in sync. Worth it as a transitional step for a
@@ -214,10 +214,10 @@ the part that matters.
 
 ```
 CloudFront distribution - api.example.com
-│
-├── origin: policies-api    -> {id1}.execute-api.eu-central-1.amazonaws.com
-├── origin: claims-api      -> {id2}.execute-api.eu-central-1.amazonaws.com
-└── origin: partners-api    -> {id3}.execute-api.eu-central-1.amazonaws.com
+|
++-- origin: policies-api    -> {id1}.execute-api.eu-central-1.amazonaws.com
++-- origin: claims-api      -> {id2}.execute-api.eu-central-1.amazonaws.com
++-- origin: partners-api    -> {id3}.execute-api.eu-central-1.amazonaws.com
 
 ordered cache behaviors - FIRST MATCH WINS
   1. /policies/*   -> policies-api
@@ -236,16 +236,16 @@ match the API's expected domain. Use the managed origin request policy
 front of API Gateway returns 403".
 
 **2. Behavior ordering is security configuration, not cosmetics.**
-First match wins. A permissive behavior placed above a restrictive one silently wins,
+First match wins. A permissive behavior placed above a restrictive one takes precedence,
 and nothing in the console warns about it. Specific patterns must be listed before
 general ones, and the ordering belongs under change control and code review like any
 other security rule.
 
-**3. A path prefix is not an authorization boundary.**
-CloudFront normalizes the URI for **matching** but forwards the **raw** URI to the
+**3. A path prefix is not an authorisation boundary.**
+CloudFront normalises the URI for **matching** but forwards the **raw** URI to the
 origin. So `/policies/..%2fclaims/x` may match the `/policies/*` behavior while the
 origin sees something else. Path prefixes route traffic; they must never be the thing
-that decides who is allowed to call what. Authorization belongs at the authorizer and
+that decides who is allowed to call what. Authorisation belongs at the authorizer and
 in the API's own resource policy.
 
 **4. Caching must be disabled explicitly.**
@@ -257,7 +257,7 @@ customer's response, which surfaces as a data breach rather than as a bug.
 
 - Per-behavior WAF is not possible: **the WebACL is per-distribution.** Per-API rules
   need either scope-down statements inside the shared WebACL, or separate
-  distributions - which is another argument for the per-team split in Q2.
+  distributions, which is another argument for the per-team split in Q2.
 - Origin timeouts default to 30s; long-running APIs need this raised deliberately.
 - `/*` as the default behavior should point somewhere safe, or return 403. Defaulting
   to a real API means a typo'd path reaches a real backend.
@@ -297,7 +297,7 @@ It holds exactly as long as the secret does, so:
 - **Rotate it with the documented overlap procedure**: add the new value to the WAF
   allow-list, update the CloudFront origin header, wait for the distribution to fully
   deploy, then remove the old value. Rotating without the overlap causes a full
-  outage - this is the step that gets skipped.
+  outage, this is the step that gets skipped.
 - Alarm on blocked requests at the regional WAF: a sustained non-zero rate is either
   an attacker probing or a rotation that half-completed.
 

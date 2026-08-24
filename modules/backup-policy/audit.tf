@@ -1,17 +1,6 @@
-###############################################################################
-# Audit Manager framework
-#
-# Each control below corresponds to one requirement this module implements. The
-# point is to close the loop: the module configures the control, and the
-# framework independently evaluates whether the control is actually in effect
-# across the estate. Findings flow into AWS Config and from there into Security
-# Hub, so a resource that drifts out of compliance surfaces without anyone
-# re-reading the Terraform.
-#
-# Requires AWS Config to be recording in this account and Region. Without it the
-# framework deploys and reports nothing, which is worse than not deploying it,
-# so it is guarded by a variable rather than always on.
-###############################################################################
+# Needs AWS Config recording in this account and Region. Without it the framework
+# deploys and evaluates nothing, so it is behind a variable rather than always on.
+
 
 resource "aws_backup_framework" "this" {
   count = var.enable_audit_framework ? 1 : 0
@@ -28,7 +17,7 @@ resource "aws_backup_framework" "this" {
   #
   # The scope carries at most ONE tag: that is the AWS ControlScope limit, not a
   # simplification. It also cannot express the pattern-matched tags, so the
-  # framework's scope is necessarily WIDER than the plan's selection -- a
+  # framework's scope is necessarily WIDER than the plan's selection, a
   # resource tagged ToBackup=true but with no Owner is deliberately excluded from
   # the plan and will be reported here as unprotected. That finding is correct:
   # the resource needs an owner. See the audit_scope_tag variable.
@@ -49,7 +38,7 @@ resource "aws_backup_framework" "this" {
   #
   # Both parameters are derived from the configured rules. Hardcoding a daily
   # frequency would report a plan whose shortest tier is weekly as permanently
-  # non-compliant -- a standing false positive that teaches the operator to
+  # non-compliant, a standing false positive that teaches the operator to
   # ignore the framework, which is worse than not deploying it.
   control {
     name = "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK"
@@ -114,7 +103,7 @@ resource "aws_backup_framework" "this" {
 
   # CROSS-REGION COPY. Pinned to the Regions this module actually copies to.
   # Without the parameter the control passes for a copy to ANY Region, including
-  # one nobody intended -- which makes it a check that the feature is on rather
+  # one nobody intended, which makes it a check that the feature is on rather
   # than a check that the policy is met.
   dynamic "control" {
     for_each = length(local.managed_destinations) > 0 ? [1] : []

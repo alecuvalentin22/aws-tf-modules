@@ -32,7 +32,7 @@ variables {
 # Vault Lock retention window
 #
 # The nastiest trap in AWS Backup. A vault lock rejects jobs whose delete_after
-# falls outside its window -- at RUN time, every night, long after the apply that
+# falls outside its window, at RUN time, every night, long after the apply that
 # introduced the mismatch reported success. Nothing in the apply output hints at
 # it, and on a compliance lock the window cannot be widened to fix it.
 # --------------------------------------------------------------------------
@@ -330,8 +330,8 @@ run "rejects_a_malformed_external_vault_arn" {
 # --------------------------------------------------------------------------
 # Regression tests for defects found in review.
 #
-# Each of these was a way for the module's headline guarantee -- "retention is
-# validated against the destination's Vault Lock window at plan time" -- to
+# Each of these was a way for the module's headline guarantee, "retention is
+# validated against the destination's Vault Lock window at plan time", to
 # pass while doing nothing. A guardrail that fails open is worse than no
 # guardrail, because it is trusted.
 # --------------------------------------------------------------------------
@@ -457,7 +457,7 @@ run "rejects_an_external_destination_with_no_kms_key_arn" {
 
 # A partial copy_retention override used to REPLACE the rule's lifecycle
 # wholesale, so `{ delete_after = 2555 }` on a rule with cold_storage_after = 90
-# produced a seven-year copy kept entirely in warm storage -- roughly an order
+# produced a seven-year copy kept entirely in warm storage, roughly an order
 # of magnitude more expensive, with nothing in the plan to show it.
 run "a_partial_copy_retention_override_inherits_the_rest_of_the_lifecycle" {
   command = apply
@@ -554,8 +554,8 @@ run "rejects_continuous_backup_with_copies_unless_acknowledged" {
 # Regression tests for the second review pass.
 # --------------------------------------------------------------------------
 
-# The two acknowledgements used to share one flag. An ordinary sandbox -- one
-# copy Region with its lock deliberately off -- forced that flag on, and it then
+# The two acknowledgements used to share one flag. An ordinary sandbox, one
+# copy Region with its lock deliberately off, forced that flag on, and it then
 # waived the unrelated cross-account KMS requirement, silently re-opening the
 # gap that guard exists to close.
 run "an_unlocked_sandbox_region_does_not_require_an_acknowledgement" {
@@ -642,7 +642,7 @@ run "a_disabled_lock_on_the_primary_vault_is_reported" {
   }
 
   # With no lock anywhere there is nothing to validate against, so the plan
-  # applies -- which is correct, and exactly why the omission has to be visible.
+  # applies, which is correct, and exactly why the omission has to be visible.
   assert {
     condition     = length(local.primary_retention_violations) == 0
     error_message = "With the primary lock disabled there is no window to check against."
@@ -660,7 +660,7 @@ run "a_disabled_lock_on_the_primary_vault_is_reported" {
 }
 
 # Merging field by field made null mean "inherit", which left no way to say
-# "no cold tier on this hop" -- so a short warm operational copy of a rule that
+# "no cold tier on this hop", so a short warm operational copy of a rule that
 # tiers to cold became inexpressible, and silently inherited a transition that
 # makes restores take hours.
 run "a_copy_override_can_clear_the_cold_storage_transition" {

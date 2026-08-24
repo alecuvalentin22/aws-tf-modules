@@ -3,8 +3,8 @@
 Scenario 2. A private API Gateway reached through PrivateLink, with split-horizon
 DNS and an optional CloudFront front door for callers outside the network.
 
-Design rationale is in [`docs/scenario-2-api-exposure.md`](../../docs/scenario-2-api-exposure.md).
-This file is usage.
+Rationale is in [`docs/scenario-2-api-exposure.md`](../../docs/scenario-2-api-exposure.md);
+usage is below.
 
 ## The problem it solves
 
@@ -74,7 +74,7 @@ them fails at apply time on its own.
 | `exposure = "dual"` without `origin_secret_arn` | A literal header value lands in the Terraform state and the distribution config, and this control is worth exactly the secrecy of that value |
 | `exposure = "dual"` without a certificate or origin | Would fail at apply with a less useful message |
 | An interface endpoint in fewer than two subnets | It becomes a single-AZ dependency for every internal caller |
-| An interface endpoint with no security group | It silently falls back to the VPC default |
+| An interface endpoint with no security group | It falls back to the VPC default, which is rarely what was meant |
 
 There is deliberately no `exposure = "public"`. A regional endpoint left resolvable
 is the weakness the module exists to remove.
@@ -89,10 +89,10 @@ is the weakness the module exists to remove.
 3. **Caching disabled explicitly.** API responses here are per-caller; caching them
    means one customer receiving another's response, which surfaces as a data breach
    rather than a bug.
-4. **A path prefix is not an authorization boundary.** CloudFront normalizes the URI
+4. **A path prefix is not an authorisation boundary.** CloudFront normalises the URI
    when matching but forwards the raw one, so `/a/..%2fb` can match one behavior and
    arrive as another. Documented on `path_routes`; nothing in Terraform can enforce
-   it. Authorization belongs in the authorizer and the resource policy.
+   it. Authorisation belongs in the authorizer and the resource policy.
 
 ## Resource policy
 

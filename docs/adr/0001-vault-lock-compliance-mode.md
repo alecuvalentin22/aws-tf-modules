@@ -25,7 +25,7 @@ code, and reaching compliance mode requires an explicit acknowledgement variable
 ### Why compliance mode is the only mode that meets the requirement
 
 The threat the isolated backup account exists to defend against is an attacker holding
-administrator credentials - ransomware operators routinely obtain them, and deleting
+administrator credentials, ransomware operators routinely obtain them, and deleting
 backups before encrypting production is standard practice.
 
 Governance mode is removable by anyone with sufficient IAM permissions. Against an

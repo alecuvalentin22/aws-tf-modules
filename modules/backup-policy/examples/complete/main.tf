@@ -1,28 +1,8 @@
 ###############################################################################
-# The full topology from the brief, in one configuration.
-#
-#   Prod account / Frankfurt   plan + primary vault
-#   Prod account / Ireland     cross-REGION copy target
-#   Backup account / Frankfurt cross-ACCOUNT copy target, isolated blast radius
-#
-# Note the asymmetry, and that it is deliberate:
-#
-#   The two prod-account vaults are created by ONE module call with no provider
-#   alias, because the AWS provider places each resource in its own Region.
-#
-#   The backup-account vault is a SEPARATE module call through an aliased
-#   provider. That boundary is the point of the design -- an isolated account
-#   exists to survive a compromise of this one, so it gets its own credentials
-#   and, in any real deployment, its own state file and its own pipeline.
-#   Wiring both into a single apply here is a convenience for demonstrating the
-#   whole picture; see the note at the bottom.
-###############################################################################
-
-###############################################################################
 # PREREQUISITES that live outside this configuration
 #
 # Cross-account copy does not work without all of these, and none of them fails
-# at apply time -- the plan applies cleanly and the copy job fails from night
+# at apply time, the plan applies cleanly and the copy job fails from night
 # one. Check them before treating a green apply as a working backup policy.
 #
 #   1. Both accounts are in the same AWS Organization.
@@ -72,12 +52,8 @@ provider "aws" {
 
 data "aws_caller_identity" "prod" {}
 
-###############################################################################
-# 1. The isolated destination, in the backup account.
-#
-# Created first: the policy below needs its ARN, and its vault policy and KMS
-# key policy both have to name the prod account before any copy can land.
-###############################################################################
+# Created first: the policy below needs its ARN, and both its vault policy and its
+# key policy have to name the prod account before any copy can land.
 
 module "backup_account_vault" {
   source = "../../modules/backup-vault"
@@ -103,15 +79,11 @@ module "backup_account_vault" {
   confirm_irreversible_compliance_lock = var.confirm_irreversible_compliance_lock
 
   # The break-glass role is exempt from the deny-delete policy. It is NOT exempt
-  # from Vault Lock -- nothing is, which is the point.
+  # from Vault Lock, nothing is, which is the point.
   deny_delete_principals_except = var.break_glass_role_arns
 
   tags = var.tags
 }
-
-###############################################################################
-# 2. The plan, its vaults and its controls, in the prod account.
-###############################################################################
 
 module "backup_policy" {
   source = "../.."
@@ -152,7 +124,7 @@ module "backup_policy" {
 
       # Required, and the easiest thing here to get wrong. The destination key
       # policy grants arn:aws:iam::<prod>:root, which DELEGATES to the prod
-      # account's IAM -- it does not authorise any principal there by itself.
+      # account's IAM. It does not authorise any principal there by itself.
       # The backup role also needs an IAM allow naming this key, and the module
       # cannot construct it without the ARN.
       kms_key_arn_external = module.backup_account_vault.kms_key_arn
@@ -161,14 +133,6 @@ module "backup_policy" {
 
   confirm_irreversible_compliance_lock = var.confirm_irreversible_compliance_lock
 
-  # ---------------------------------------------------------------------------
-  # Three tiers.
-  #
-  # Copy targets differ per tier on purpose. Replicating every daily point into a
-  # second account triples the storage bill for the tier least likely to be the
-  # one restored from; the long-lived tiers are the ones worth putting behind an
-  # account boundary.
-  # ---------------------------------------------------------------------------
   rules = [
     {
       name      = "daily"
@@ -193,13 +157,13 @@ module "backup_policy" {
       copy_to = ["secondary_region", "backup_account"]
 
       # The cross-account copy is the compliance copy, so it keeps the full term
-      # in cold storage. The cross-Region copy is the OPERATIONAL one -- shorter,
+      # in cold storage. The cross-Region copy is the OPERATIONAL one, shorter,
       # and deliberately kept warm so a restore from it takes minutes rather than
       # hours.
       #
       # disable_cold_storage is what makes that expressible. Without it the copy
       # inherits the rule's 90-day transition, and the "operational" copy quietly
-      # becomes one that restores in hours -- which is the opposite of its purpose,
+      # becomes one that restores in hours, which is the opposite of its purpose,
       # and invisible in the plan.
       copy_retention = {
         secondary_region = { delete_after = 365, disable_cold_storage = true }
@@ -208,9 +172,6 @@ module "backup_policy" {
     },
   ]
 
-  # ---------------------------------------------------------------------------
-  # Selection: ToBackup=true AND an owner. Both, not either.
-  # ---------------------------------------------------------------------------
   selection_required_tags = {
     ToBackup = "true"
   }

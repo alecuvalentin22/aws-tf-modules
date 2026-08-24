@@ -3,8 +3,8 @@
 Scenario 3. Monitoring for a self-managed GitLab: synthetic canaries, the alarms
 that matter, and an explicit statement of what is not being watched.
 
-Design rationale is in [`docs/scenario-3-gitlab-resilience.md`](../../docs/scenario-3-gitlab-resilience.md).
-This file is usage.
+The reasoning behind these choices is in
+[`docs/scenario-3-gitlab-resilience.md`](../../docs/scenario-3-gitlab-resilience.md).
 
 ## Usage
 

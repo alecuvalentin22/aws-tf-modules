@@ -1,16 +1,3 @@
-###############################################################################
-# Vaults
-#
-# The primary vault plus one vault per managed copy destination. All of them are
-# instances of the same child module, so the KMS key policy, the Vault Lock, the
-# deny-delete policy and the notification wiring are defined once and cannot
-# drift between locations.
-#
-# `for_each` over copy destinations is possible because the AWS provider's
-# per-resource `region` argument decouples "which Region" from "which provider".
-# Adding a third or fourth Region is a map entry, not a new provider alias and a
-# new copy of every resource.
-###############################################################################
 
 module "primary_vault" {
   source = "./modules/backup-vault"

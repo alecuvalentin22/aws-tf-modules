@@ -1,21 +1,3 @@
-###############################################################################
-# The public front door, for APIs that must serve both audiences.
-#
-# Four things reliably go wrong in front of API Gateway, and all four are
-# handled here rather than left to the caller:
-#
-#   1. Forwarding the viewer Host header to an execute-api origin returns 403 on
-#      every request, because API Gateway routes on Host and the viewer's value
-#      does not match. The AllViewerExceptHostHeader managed policy is the fix,
-#      and this is the single most common cause of "CloudFront in front of API
-#      Gateway returns 403".
-#   2. Behavior ordering is security configuration. Enforced in main.tf.
-#   3. Caching must be disabled explicitly. API responses here are per-caller,
-#      and the failure mode of getting it wrong is one customer receiving
-#      another's response.
-#   4. A path prefix is not an authorization boundary. Documented on the
-#      path_routes variable; nothing here can enforce it.
-###############################################################################
 
 locals {
   # Managed policy IDs. Referenced by their AWS-published values rather than by a

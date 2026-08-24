@@ -6,8 +6,8 @@ back clean.
 
 The point is narrow but important: a linter that reports "clean" tells you
 nothing unless you know it is capable of reporting something else. A dependency
-upgrade that silently defanged `parliament` would otherwise turn the whole check
-into a green tick that verifies nothing - which is worse than having no check,
+upgrade that defanged `parliament` would otherwise turn the whole check
+into a green tick that verifies nothing, which is worse than having no check,
 because it is trusted.
 
 | Fixture | Failure class it proves the linter still catches |

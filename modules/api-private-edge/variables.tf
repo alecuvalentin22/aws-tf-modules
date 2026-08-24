@@ -139,9 +139,9 @@ variable "path_routes" {
     The module refuses an ordering where a general pattern precedes a more specific one
     that it would shadow, because that mistake is invisible in a plan diff.
 
-    A path prefix routes traffic. It is NOT an authorization boundary: CloudFront
-    normalizes the URI when matching but forwards the raw one to the origin, so
-    /a/..%2fb can match one behavior and arrive as another. Authorization belongs in
+    A path prefix routes traffic. It is NOT an authorisation boundary: CloudFront
+    normalises the URI when matching but forwards the raw one to the origin, so
+    /a/..%2fb can match one behavior and arrive as another. Authorisation belongs in
     the authorizer and in the API's resource policy.
   EOT
 

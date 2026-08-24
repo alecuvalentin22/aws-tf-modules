@@ -1,13 +1,11 @@
 """Custom AWS Config rule: is this resource protected by a recently rotated KMS key?
 
-Why this exists
----------------
 The AWS managed rule `cmk-backing-key-rotation-enabled` cannot answer the question the
 scenario actually asks, for two independent reasons:
 
 1. Its own documentation states it does not apply to keys with imported (EXTERNAL) key
    material. Every key in this estate is BYOK, so the rule is structurally
-   non-functional here -- and it reports COMPLIANT, which is worse than reporting
+   non-functional here, and it reports COMPLIANT, which is worse than reporting
    nothing.
 2. It evaluates `AWS::KMS::Key`. It answers "is this key rotated?", not "is this
    database protected by a rotated key?". The requirement is to identify the
@@ -64,7 +62,7 @@ KEY_PATHS: dict[str, tuple[str, ...]] = {
 
 
 class KeyLookupError(RuntimeError):
-    """The key could not be inspected -- distinct from the key being non-compliant."""
+    """The key could not be inspected, distinct from the key being non-compliant."""
 
 
 def _dig(document: Any, path: Iterable[str]) -> Optional[Any]:
@@ -228,7 +226,7 @@ def _kms_client(region: str, role_arn: Optional[str]):
 
     The keys are centralised in a Security account while this rule runs in the workload
     account, so a read-only cross-account role is required. This is the part most often
-    missed at design time -- the rule works fine in the account that owns the keys and
+    missed at design time, the rule works fine in the account that owns the keys and
     silently fails everywhere else.
     """
     import boto3  # imported here so the pure logic above stays importable without it

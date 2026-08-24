@@ -11,7 +11,7 @@ reasons:
 
 1. Its own documentation states it **does not apply to keys with imported (EXTERNAL)
    key material**. Every key in this estate is BYOK, so the rule is structurally
-   non-functional - and it reports COMPLIANT, which is worse than reporting nothing.
+   non-functional, and it reports COMPLIANT, which is worse than reporting nothing.
 2. It evaluates `AWS::KMS::Key`. It answers *"is this key rotated?"*, not *"is this
    database protected by a rotated key?"*. The requirement is to name the
    **resources**, so an operator knows which instance to act on.
@@ -22,13 +22,13 @@ Evaluates the resource types and walks **resource -> KMS key -> rotation history
 
 ```
 Config records a change to an RDS instance / DynamoDB table / S3 bucket
-        │
-        ├─ read the KMS key reference out of the configuration item
-        ├─ resolve it (DescribeKey), in the Security account if needed
-        ├─ ListKeyRotations
-        └─ compare the most recent rotation against the policy window
-        │
-        ▼
+        |
+        +- read the KMS key reference out of the configuration item
+        +- resolve it (DescribeKey), in the Security account if needed
+        +- ListKeyRotations
+        +- compare the most recent rotation against the policy window
+        |
+        v
 COMPLIANT / NON_COMPLIANT, annotated with the key ARN and the actual age
 ```
 
@@ -75,8 +75,8 @@ python3 -m unittest discover -s lambdas/kms-rotation-compliance/tests \
 ```
 
 28 tests, no boto3, no credentials, no network. The decision logic takes its AWS access
-through injected callables, which is what makes every branch - including the
-cross-account failure path and both sides of the policy boundary - reachable from a
+through injected callables, which is what makes every branch. Including the
+cross-account failure path and both sides of the policy boundary, reachable from a
 plain unittest run. A Config rule whose logic can only be exercised by deploying it is
 one nobody changes with confidence.
 

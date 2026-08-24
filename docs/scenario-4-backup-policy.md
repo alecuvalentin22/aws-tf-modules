@@ -39,8 +39,8 @@ covers usage.
 The requirement is `ToBackup=true` **AND** `Owner=<owner>`.
 
 AWS Backup evaluates **multiple `selection_tag` blocks with OR**. Written that way, a
-resource tagged `ToBackup=true` and nothing else is selected - the ownership
-requirement silently does nothing. `condition` entries are evaluated with **AND**,
+resource tagged `ToBackup=true` and nothing else is selected, the ownership
+requirement does nothing at all. `condition` entries are evaluated with **AND**,
 which is what the requirement asks for.
 
 This is the single most consequential correctness decision in the module, it is
@@ -95,12 +95,12 @@ the vault lock window [7, 365]
 ```
 
 Checking **per destination** rather than against one global window is what catches the
-case where the local backup is fine and only the cross-account copy is rejected - the
+case where the local backup is fine and only the cross-account copy is rejected, the
 version of this bug that is hardest to spot, because the plan appears to be working.
 
 For an external (cross-account) destination the module cannot read the lock, so the
 caller declares it via `lock_min_retention_days` / `lock_max_retention_days`. Omitting
-both is an **error** rather than a silent skip - failing open with no signal on the least
+both is an **error** rather than a silent skip, failing open with no signal on the least
 observable hop defeats the point of the guardrail. `unvalidated_retention_targets` names
 anything that went unchecked, including a deliberately unlocked primary vault.
 
@@ -109,7 +109,7 @@ Six tests in `tests/guardrails.tftest.hcl` cover this, including the accept case
 ### 4. Governance mode first, and the code enforces the order
 
 Compliance mode is the only setting that survives an attacker holding administrator
-credentials - which is the entire reason a separate backup account exists. Governance
+credentials, which is the entire reason a separate backup account exists. Governance
 mode is removable by anyone with sufficient IAM permissions, so against that threat it
 offers nothing.
 
@@ -126,7 +126,7 @@ unless `confirm_irreversible_compliance_lock = true` is set explicitly. That tur
 order is: apply in governance mode, prove a full backup -> copy -> **restore** cycle,
 then flip. [ADR-0001](adr/0001-vault-lock-compliance-mode.md).
 
-### 5. Restore testing, because an untested backup is a hypothesis
+### 5. Restore testing
 
 `aws_backup_restore_testing_plan` restores a real recovery point on a schedule, records
 whether it worked and how long it took, and cleans up afterwards.
@@ -145,7 +145,7 @@ The **cross-account** copy is the exception, and the reason is structural rather
 oversight: it lives in an account this module has no credentials for. Testing it means
 running a restore testing plan in the backup account, as part of that account's own
 deployment. That is called out in the runbook because it is the copy you would reach for
-during a ransomware incident - the worst one to be restoring from for the first time.
+during a ransomware incident, the worst one to be restoring from for the first time.
 
 ---
 
@@ -157,7 +157,7 @@ a working control:
 
 | Addition | Why |
 | --- | --- |
-| SNS + EventBridge on failures | A backup policy that fails silently is worse than none: it produces the paperwork of compliance without the data |
+| SNS + EventBridge on failures | A backup policy that fails without telling anyone produces the paperwork of compliance and none of the data |
 | **Staleness alarm** (`treat_missing_data = "breaching"`) | A plan that stops running emits **no failure events**. This is the only alarm that sees a deleted selection, a revoked role, or a resource type that was never opted in |
 | Restore testing | See above |
 | Audit Manager framework | Turns each requirement into a continuously evaluated control, so compliance is evidence rather than assertion |
@@ -173,7 +173,7 @@ failure and the one that looks fine on a dashboard.
 ## What `resources = ["*"]` does not mean
 
 `["*"]` covers every resource type **that is opted in for that Region**. A type that
-is not opted in is skipped **silently** - the plan reports success while protecting
+is not opted in is skipped without an error. The plan reports success while protecting
 less than it appears to.
 
 `aws_backup_region_settings` controls this, and the module can manage it
@@ -195,20 +195,20 @@ This is a case where the more "complete" default is the more dangerous one.
 
 ```
 modules/backup-policy/
-├── modules/backup-vault/     leaf: one vault + KMS key + lock + policy + notifications
-├── plan.tf                   rules, copy actions, selection
-├── vaults.tf                 composes backup-vault: primary + N copy destinations
-├── iam.tf                    service role
-├── notifications.tf          SNS, EventBridge, alarms
-├── restore-testing.tf        restore testing plan and selections
-├── audit.tf                  Audit Manager framework and reports
-├── examples/{minimal,complete}/
-└── tests/                    26 tests, mocked provider, no AWS account needed
++-- modules/backup-vault/     leaf: one vault + KMS key + lock + policy + notifications
++-- plan.tf                   rules, copy actions, selection
++-- vaults.tf                 composes backup-vault: primary + N copy destinations
++-- iam.tf                    service role
++-- notifications.tf          SNS, EventBridge, alarms
++-- restore-testing.tf        restore testing plan and selections
++-- audit.tf                  Audit Manager framework and reports
++-- examples/{minimal,complete}/
++-- tests/                    26 tests, mocked provider, no AWS account needed
 ```
 
 **Terraform cannot iterate over provider configurations.** That single constraint is
 why most AWS Backup modules are hard-wired to a fixed set of locations, with a copy of
-the KMS key, the lock and the vault policy per location - three near-identical blocks
+the KMS key, the lock and the vault policy per location, three near-identical blocks
 that then drift apart.
 
 Two things avoid that here:
@@ -227,7 +227,7 @@ account's vault is a separate instantiation of `backup-vault`, and its ARN is pa
 in as an external destination.
 
 In production those should be **two states**. A single state that can write to both
-accounts is a single credential that can destroy both copies - which is precisely the
+accounts is a single credential that can destroy both copies, which is precisely the
 failure the isolated backup account exists to survive. The `complete` example wires
 both into one apply for demonstration and says so in a comment; the module does not
 require it.
@@ -249,14 +249,13 @@ no credentials, so they run as a required check in CI:
 | `modules/backup-vault/tests/lock.tftest.hcl` | Lock modes and the compliance-mode acknowledgement guard |
 | `modules/backup-vault/tests/policies.tftest.hcl` | The rendered vault and KMS key policies, including the scoping of the cross-account grant |
 
-The guardrail tests are the ones that matter. A guardrail with no test proving it fires
-is decoration, and every one of these was written by supplying a configuration that
-AWS would accept and then fail on.
+The guardrail tests are the ones that matter. Each was written by feeding the module a
+configuration AWS would accept and then choke on nightly.
 
 **Policies are built with `jsonencode` rather than `aws_iam_policy_document`
 specifically so they can be tested.** A mocked provider cannot compute a data source, so
 a policy built that way renders as an empty placeholder and every statement in it goes
-untested - including the four grants that decide whether a cross-account copy works. The
+untested. Including the four grants that decide whether a cross-account copy works. The
 trade-off is losing the data source's ergonomics; the gain is that the security-carrying
 part of the module is the part under test.
 
@@ -269,30 +268,27 @@ Two tests caught real bugs during development:
 
 Both are the kind of defect that `terraform validate` cannot see.
 
-## Review findings
+## What review turned up
 
-The module was then reviewed against its own claims, by trying to break it rather than
-by reading it. Three silent failures came out of the first round, none of which fail at
-apply time, which is what makes the exercise worth doing:
+Going back over the module trying to break it, rather than to read it, found three
+failures that all apply cleanly and only misbehave later:
 
 | Found | Effect |
 | --- | --- |
-| The deny-delete vault policy denied `PutBackupVaultAccessPolicy` and `DeleteBackupVaultAccessPolicy` to `Principal: *` | The policy could never be corrected or removed by the role that created it; `terraform destroy` could never succeed |
-| Restore-testing selections filtered on `aws:ResourceTag/BackupRule` | That is a *recovery point* tag; `protected_resource_conditions` filters the *protected resource*. Every restore test selected zero resources, ran weekly, and reported success |
-| SNS topics encrypted with `alias/aws/sns` | The AWS-managed key grants no service principal `kms:GenerateDataKey*`, so every notification and alarm failed at delivery - including the staleness alarm, the one control that detects a plan that has stopped running |
+| The deny-delete vault policy denied `PutBackupVaultAccessPolicy` and `DeleteBackupVaultAccessPolicy` to `Principal: *` | The policy could never be corrected or removed by the role that created it, and `terraform destroy` could never succeed |
+| Restore-testing selections filtered on `aws:ResourceTag/BackupRule` | That is a recovery-point tag, and `protected_resource_conditions` filters the protected resource. Every restore test selected zero resources, ran weekly, and reported success |
+| SNS topics encrypted with `alias/aws/sns` | The AWS-managed key grants no service principal `kms:GenerateDataKey*`, so every notification and alarm failed at delivery, including the staleness alarm |
 
-Plus a missing IAM grant on the destination key that would have broken every encrypted
-cross-account copy, a `__primary__` sentinel key collision that let the headline
-retention guardrail fail open, and a `copy_retention` override that silently dropped
-`cold_storage_after` - turning a seven-year copy into warm storage.
+Three more came out of the same pass: a missing IAM grant on the destination key that
+would have broken every encrypted cross-account copy, a `__primary__` sentinel key
+collision that let the retention guardrail fail open, and a `copy_retention` override
+that dropped `cold_storage_after`, turning a seven-year copy into warm storage.
 
-A second round on the revised module found no blockers, but showed that six of those
-fixes had introduced new defects - including one acknowledgement flag that gated two
-unrelated guards, so an unlocked sandbox Region silently waived the cross-account KMS
-requirement and re-opened the largest finding from the first round.
+A second pass over the fixes found that some of them had introduced problems of their
+own. The worst was an acknowledgement flag covering two unrelated guards, so an unlocked
+sandbox Region waived the cross-account KMS requirement as a side effect.
 
-All are fixed, each with a regression test. [`review.md`](review.md) records both rounds,
-the response to each finding, and the trade-offs accepted rather than fixed.
+All of it is fixed and each has a regression test.
 
 ---
 
@@ -317,7 +313,7 @@ Two things drive most of the bill and most of the available savings:
 - **Cold storage on the long tier.** The seven-year tier is the largest by volume, and
   the 90-day transition is what makes it affordable. Note the AWS constraint the module
   enforces: `delete_after` must be at least 90 days after `cold_storage_after`, because
-  the archive tier has a 90-day minimum charge - deleting earlier costs *more*.
+  the archive tier has a 90-day minimum charge, deleting earlier costs *more*.
 
 Restore testing is close to free relative to the storage and is the highest-value line
 item here.

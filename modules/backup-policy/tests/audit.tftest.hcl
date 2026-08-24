@@ -3,7 +3,7 @@
 # The framework is what turns each requirement into a continuously evaluated
 # control rather than an assertion in a README, so its parameters have to follow
 # the configuration. A control parameterised with a constant that contradicts the
-# plan produces a permanent false positive -- and a framework that is always red
+# plan produces a permanent false positive, and a framework that is always red
 # teaches the operator to ignore it, which is worse than not deploying one.
 
 mock_provider "aws" {
@@ -67,7 +67,7 @@ run "worm_is_audited_on_the_lock_not_only_on_the_access_policy" {
 # permanently non-compliant.
 # These assert on the rendered control parameter rather than on the local that
 # feeds it. Asserting the local proves the arithmetic and nothing about whether
-# the value reaches the framework -- swapping two locals inside audit.tf would
+# the value reaches the framework, swapping two locals inside audit.tf would
 # leave a locals-only assertion passing.
 run "a_weekly_only_plan_is_not_asked_to_run_daily" {
   command = apply
@@ -136,7 +136,7 @@ run "a_rate_schedule_is_not_treated_as_daily" {
 
 # The control passes when a plan has AT LEAST ONE rule meeting the requirement,
 # so parameterising it with the LEAST frequent tier would let the plan pass on
-# its monthly rule alone -- and the control could then not detect the daily tier
+# its monthly rule alone, and the control could then not detect the daily tier
 # being deleted. The tightest configured cadence is the assertion worth making.
 run "a_mixed_plan_is_held_to_its_tightest_cadence" {
   command = apply
@@ -165,7 +165,7 @@ run "the_retention_parameter_follows_the_shortest_tier" {
 }
 
 # Without the parameter, the cross-Region control passes for a copy to ANY
-# Region -- making it a check that the feature is switched on rather than a check
+# Region, making it a check that the feature is switched on rather than a check
 # that the policy is met.
 run "copy_controls_are_pinned_to_the_configured_destinations" {
   command = apply

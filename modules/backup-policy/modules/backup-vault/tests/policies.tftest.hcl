@@ -3,12 +3,8 @@
 # These are built with jsonencode rather than aws_iam_policy_document precisely
 # so that this file can exist: a mocked provider cannot compute a data source,
 # so a policy built that way renders as an empty placeholder and every statement
-# in it goes untested. These policies are what actually permit -- or silently
-# block -- a cross-account copy, and none of it is legible in a plan diff.
-#
-# The previous version of this suite asserted `length(aws_backup_vault_policy.this) == 1`
-# and called it a test that the source account was granted. It passed because a
-# resource existed, not because it granted anything.
+# in it goes untested. These policies are what actually permit, or silently
+# block, a cross-account copy, and none of it is legible in a plan diff.
 
 mock_provider "aws" {
   source = "./tests/mocks"
@@ -53,7 +49,7 @@ run "vault_policy_denies_deletion_of_recovery_points" {
 # and no exemption makes the policy unmodifiable and unremovable by the very
 # role that created it. The vault could then never gain a new source account or
 # a break-glass exemption, and `terraform destroy` could never succeed. A policy
-# that cannot be corrected is a lockout, not a control -- Vault Lock is what
+# that cannot be corrected is a lockout, not a control. Vault Lock is what
 # provides the tamper-proof guarantee.
 run "vault_policy_does_not_deny_its_own_replacement" {
   command = apply
@@ -112,7 +108,7 @@ run "no_deny_statement_when_the_policy_is_disabled" {
 #
 # The half of the cross-account path that is most often missed. Granting the
 # vault policy without the key policy produces a copy job that fails with
-# AccessDenied on the destination key -- nightly, after a clean apply.
+# AccessDenied on the destination key, nightly, after a clean apply.
 # --------------------------------------------------------------------------
 
 run "key_policy_delegates_to_the_owning_account" {
@@ -146,12 +142,12 @@ run "key_policy_lets_the_source_account_re_encrypt_the_copy" {
 
 # The grant above is the one place this module hands data-plane access to
 # another account. Unconditional, it would give anyone with admin in the source
-# account the ability to read everything in the isolated vault -- which is the
+# account the ability to read everything in the isolated vault, which is the
 # exact failure the account boundary exists to prevent.
 #
 # But the scoping must not fail CLOSED. AWS Backup may authorise its copy-time
 # KMS calls through a grant rather than through this statement, in which case
-# kms:ViaService is absent from the request -- and a plain StringEquals on an
+# kms:ViaService is absent from the request, and a plain StringEquals on an
 # absent context key evaluates FALSE, denying the very operation the statement
 # exists to permit. Silently, nightly, after a clean apply.
 #

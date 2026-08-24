@@ -1,15 +1,3 @@
-###############################################################################
-# Service role
-#
-# AWS Backup assumes this role to read the protected resources and write recovery
-# points. The AWS managed policies are used deliberately: they are extended by AWS
-# whenever a new resource type becomes supported, so a hand-rolled equivalent
-# silently stops covering "all supported resources" the moment the estate grows.
-#
-# The inline policy adds what the managed policies do not: explicit permission on
-# the destination vaults and their keys, which is what cross-Region and
-# cross-account copy actually needs.
-###############################################################################
 
 locals {
   backup_assume_role_policy = jsonencode({
@@ -23,7 +11,7 @@ locals {
         #
         # IfExists, not the plain operators. A StringEquals on a context key that
         # the caller does not populate evaluates to FALSE, which would make the
-        # role unassumable and stop every backup job in the account -- silently,
+        # role unassumable and stop every backup job in the account, silently,
         # since nothing fails at apply time. AWS's own generated service role
         # carries no conditions at all; IfExists keeps the protection where the
         # keys are present without betting the whole plan on them always being so.

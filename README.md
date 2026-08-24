@@ -14,10 +14,9 @@ summary.
 | 4 | Backup policy | [`docs/scenario-4-backup-policy.md`](docs/scenario-4-backup-policy.md) | [`modules/backup-policy`](modules/backup-policy) |
 
 Scenario 4 is the one the brief asks for a module, and it is where most of the effort
-went. The code accompanying scenarios 1 to 3 is there because each written answer makes
-a specific claim that is better demonstrated than asserted: that the AWS managed Config
-rule cannot answer the question asked, that a private API removes the bypass outright,
-and that the alarms which matter are the ones treating silence as failure.
+went. Scenarios 1-3 also have code. Each of those answers makes a claim I would rather show
+than assert: the managed Config rule cannot answer the question, a private API kills the
+bypass outright, and the alarms that matter are the ones treating silence as failure.
 
 ---
 
@@ -29,9 +28,8 @@ If you have five minutes, read **[`docs/scenario-4-backup-policy.md`](docs/scena
 [`modules/backup-policy/locals.tf`](modules/backup-policy/locals.tf), where the correctness
 logic lives.
 
-If you have twenty, add [`docs/review.md`](docs/review.md): the module was reviewed twice
-against its own claims, and that document records what the reviews found, what changed in
-response, and the trade-offs that were accepted rather than fixed.
+If you have twenty, read the module itself. `variables.tf` carries the reasoning for each
+input, and the preconditions in `plan.tf` are where the interesting decisions ended up.
 
 ---
 
@@ -55,7 +53,7 @@ response, and the trade-offs that were accepted rather than fixed.
 **It refuses configurations that AWS accepts and then fails on nightly.**
 A Vault Lock enforces its retention window *at job time*, not at apply time. A plan whose
 `delete_after` falls outside a destination's window applies cleanly, reports success, and
-then fails every night in production - and on a compliance lock the window cannot be
+then fails every night in production, and on a compliance lock the window cannot be
 widened to fix it. The module checks every `(rule, destination, retention)` triple against
 *that destination's* window at plan time and names the offender. Five other run-time-only
 AWS constraints get the same treatment.
@@ -63,8 +61,8 @@ AWS constraints get the same treatment.
 
 **Selection uses `condition`, not `selection_tag`.**
 AWS Backup evaluates multiple `selection_tag` blocks with OR, so `ToBackup=true` **AND**
-`Owner=<owner>` written that way silently accepts resources with no owner. It is invisible
-in a plan diff and fails in the direction that breaks nothing - you back up more than
+`Owner=<owner>` written that way accepts resources with no owner at all. It is invisible
+in a plan diff and fails in the direction that breaks nothing, you back up more than
 intended, so no job fails and nobody notices until an audit.
 [ADR-0002](docs/adr/0002-condition-not-selection-tag.md)
 
@@ -72,7 +70,7 @@ intended, so no job fails and nobody notices until an audit.
 Terraform cannot iterate over provider configurations, which is why modules like this are
 usually hard-wired to a fixed set of locations, with the KMS key, the lock and the vault
 policy copy-pasted per location. Using the AWS provider v6 per-resource `region` argument,
-copy destinations are a map - adding a Region is an entry, not a provider alias and a copy
+copy destinations are a map, adding a Region is an entry, not a provider alias and a copy
 of every resource. A test runs the module with five destinations across five Regions.
 [ADR-0004](docs/adr/0004-module-composition-and-account-boundaries.md)
 
@@ -111,7 +109,7 @@ python3 -m unittest discover -s lambdas/kms-rotation-compliance/tests \
                              -t lambdas/kms-rotation-compliance
 ```
 
-Optionally, the policy linter - needs `pip install parliament`:
+Optionally, the policy linter, needs `pip install parliament`:
 
 ```bash
 python3 scripts/lint_policies.py
@@ -148,7 +146,6 @@ docs/
   scenario-3-gitlab-resilience.md   Q1-Q4: single-AZ weaknesses and snapshot split-brain,
                                     target architectures, monitoring, runbook automation
   scenario-4-backup-policy.md       Design notes for the module
-  review.md                         Two rounds of review findings and the response to each
   adr/                              Four decision records
 
 modules/backup-policy/              Scenario 4. The build.
@@ -176,5 +173,4 @@ scripts/lint_policies.py            Renders and lints every policy the module pr
 - Comments explain **why**, not what. The Terraform already says what.
 - All identifiers, domains and account IDs are neutral placeholders (`example.com`,
   `111111111111`).
-- Every guardrail has a test that supplies a bad configuration and asserts the refusal. A
-  guardrail with no test proving it fires is decoration.
+- Every guardrail has a test that feeds it a bad config and asserts the refusal.

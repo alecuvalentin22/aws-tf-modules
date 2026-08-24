@@ -25,7 +25,7 @@ locals {
   # Managed destinations get a vault built by the child module in this account,
   # in an arbitrary Region, via the provider's per-resource `region` argument.
   # External destinations (in practice, the isolated backup account) are only
-  # referenced -- they are deployed separately with their own credentials.
+  # referenced, they are deployed separately with their own credentials.
   # ---------------------------------------------------------------------------
   managed_destinations = {
     for k, d in var.copy_destinations : k => d if d.vault_arn == null
@@ -58,16 +58,9 @@ locals {
       for dest in r.copy_to : {
         destination           = dest
         destination_vault_arn = local.destination_vault_arns[dest]
-        # Merged field by field rather than substituted wholesale. A partial
-        # override such as `{ delete_after = 2555 }` on a rule whose lifecycle
-        # sets cold_storage_after would otherwise produce a seven-year copy kept
-        # entirely in WARM storage -- roughly an order of magnitude more
-        # expensive, with nothing in the plan to indicate it.
-        # Merged field by field rather than substituted wholesale. A partial
-        # override such as `{ delete_after = 2555 }` on a rule whose lifecycle
-        # sets cold_storage_after would otherwise produce a seven-year copy kept
-        # entirely in WARM storage -- roughly an order of magnitude more
-        # expensive, with nothing in the plan to indicate it.
+        # Merge field by field, don't substitute wholesale. `{ delete_after = 2555 }`
+        # on a rule that sets cold_storage_after would otherwise give a 7-year copy
+        # sitting in warm storage, with nothing in the plan to show it.
         #
         # The copy_retention object attributes are `optional` with no default, so
         # an unset field is null and stays distinguishable from an explicit false.
@@ -135,15 +128,15 @@ locals {
   # Two different things get conflated if you are not careful, and only one of
   # them is a problem:
   #
-  #   Deliberately not locked  -- lock.enabled = false on a vault this module can
+  #   Deliberately not locked:  lock.enabled = false on a vault this module can
   #                               see. There is no window to check because the
   #                               operator said so. A stated intent, not a gap.
-  #   Window not declared      -- an EXTERNAL destination whose Vault Lock lives in
+  #   Window not declared:      an EXTERNAL destination whose Vault Lock lives in
   #                               another account, which this module cannot read.
   #                               Its retention is genuinely unvalidated.
   #
   # Only the second requires acknowledgement. Making the first require it too
-  # meant an ordinary sandbox -- one unlocked copy Region -- forced the
+  # meant an ordinary sandbox, one unlocked copy Region, forced the
   # acknowledgement flag on, and that flag then waived unrelated checks.
   undeclared_external_windows = sort([
     for k, d in local.external_destinations : k
@@ -152,7 +145,7 @@ locals {
 
   # Everything whose retention was not validated, for whatever reason, so the
   # omission is visible rather than silent. Reported even when acknowledged, and
-  # symmetric across the primary vault and the copy destinations -- the vault
+  # symmetric across the primary vault and the copy destinations, the vault
   # every job writes to first should not be the one checked least.
   unvalidated_retention_targets = sort(concat(
     local.primary_lock_window.enabled ? [] : ["primary vault (lock disabled)"],
@@ -170,7 +163,7 @@ locals {
   unchecked_copy_destinations_out = local.undeclared_external_windows
 
   # External destinations whose KMS key ARN was not supplied. Only material when
-  # this module builds the backup role -- a caller supplying their own role owns
+  # this module builds the backup role, a caller supplying their own role owns
   # its permissions.
   external_destinations_missing_key = var.backup_role_arn != null ? [] : sort([
     for k, d in local.external_destinations : k if d.kms_key_arn_external == null
@@ -239,7 +232,7 @@ locals {
   }
 
   # Keys the backup role needs IAM permission on. A destination key policy that
-  # grants `<source-account>:root` only DELEGATES to that account's IAM -- it
+  # grants `<source-account>:root` only DELEGATES to that account's IAM. It
   # does not itself authorise any principal there. Both sides must allow, so an
   # external destination's key ARN has to be named here too or every encrypted
   # cross-account copy fails with AccessDenied on the destination key.
@@ -262,7 +255,7 @@ locals {
   #
   # AWS cron has six fields: minute hour day-of-month month day-of-week year.
   # A pinned day-of-month means monthly; a pinned day-of-week means weekly;
-  # anything else is treated as daily. Deliberately coarse -- the Audit Manager
+  # anything else is treated as daily. Deliberately coarse, the Audit Manager
   # parameter is in whole days, so a full cron parser would add risk without
   # adding resolution.
   cron_fields = {

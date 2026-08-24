@@ -1,31 +1,25 @@
 #!/usr/bin/env python3
 """Lint every IAM/KMS/SNS policy this module renders, using the real plan output.
 
-Why this exists
----------------
 The module builds its policies with `jsonencode` rather than
 `aws_iam_policy_document`, which is what lets `terraform test` assert on them
 (a mocked provider cannot compute a data source). The cost of that choice is
 that nothing validates the *contents* the way the data source would: a typo'd
 action name, a condition operator that does not exist, or a condition key that
 is meaningless for the action it is attached to would all render as perfectly
-valid JSON and fail only at apply time -- or, worse, evaluate to something
+valid JSON and fail only at apply time, or, worse, evaluate to something
 other than intended.
 
 This closes that gap. It renders the policies from an actual `terraform plan`
 and runs them through `parliament`, which knows AWS's action and condition-key
 catalogue.
 
-Proving the check has teeth
----------------------------
 A linter that reports "clean" is worthless unless you know it can report
 anything else. So before looking at the real policies, this script runs three
 deliberately broken fixtures through the same code path and FAILS if any of
 them comes back clean. A dependency change that silently defanged the linter
 would otherwise turn this into a green check that verifies nothing.
 
-Known false positives
----------------------
 parliament is built for identity policies. Two of its findings are correct
 behaviour for a *resource* policy and are suppressed by name:
 
@@ -37,8 +31,7 @@ behaviour for a *resource* policy and are suppressed by name:
 
 Suppressing by name rather than by severity keeps everything else in scope.
 
-Usage
------
+Usage:
     pip install parliament
     python3 scripts/lint_policies.py            # lint
     python3 scripts/lint_policies.py --keep     # keep the rendered policies
@@ -103,10 +96,10 @@ provider "aws" {
 # not appear in the plan at all and therefore cannot be linted.
 #
 #   module_keys    the module creates its own CMKs, so the KMS key policies are
-#                  rendered -- but the backup role's inline policy references
+#                  rendered, but the backup role's inline policy references
 #                  those keys' ARNs, which are unknown until apply.
 #   supplied_keys  the caller passes existing key ARNs, so the key ARNs are known
-#                  -- at the cost of the module not creating the keys whose
+#                  at the cost of the module not creating the keys whose
 #                  policies the first scenario covers.
 #   no_copies      no copy destinations at all, so the role's inline policy has
 #                  no module-created vault ARN in it and finally renders. The

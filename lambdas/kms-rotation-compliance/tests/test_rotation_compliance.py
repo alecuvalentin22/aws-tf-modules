@@ -2,7 +2,7 @@
 
 No boto3, no credentials, no network: the decision logic takes its AWS access through
 injected callables, so every branch is reachable from a plain unittest run. That is the
-point of the module split -- a Config rule whose logic can only be exercised by
+point of the module split, a Config rule whose logic can only be exercised by
 deploying it is a Config rule nobody changes with confidence.
 
     python3 -m unittest discover -s lambdas/kms-rotation-compliance/tests -v
@@ -215,7 +215,7 @@ class EvaluateResource(unittest.TestCase):
     def test_key_that_cannot_be_read_raises_rather_than_passing(self):
         # The cross-account read is the part most likely to be misconfigured. Failing
         # open here would report COMPLIANT for every resource in every account that
-        # cannot reach the Security account -- the exact opposite of the requirement.
+        # cannot reach the Security account, the exact opposite of the requirement.
         def _boom(_key_reference):
             raise RuntimeError("AccessDenied")
 

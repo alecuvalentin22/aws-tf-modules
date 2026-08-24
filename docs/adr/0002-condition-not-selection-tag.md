@@ -36,7 +36,7 @@ condition {
 }
 ```
 
-They look equivalent. They are not.
+They are not equivalent.
 
 ## Decision
 
@@ -48,7 +48,7 @@ They look equivalent. They are not.
 evaluated with AND.**
 
 Written as option A, a resource tagged `ToBackup=true` with no `Owner` tag at all is
-still selected. The ownership half of the requirement silently does nothing.
+still selected. The ownership half of the requirement does nothing at all.
 
 Three properties make this the most dangerous kind of bug:
 
@@ -58,7 +58,7 @@ Three properties make this the most dangerous kind of bug:
    intended. No job fails, no alarm fires, nothing is missing during a restore. The
    symptom is a larger bill and a control that does not do what the compliance document
    says it does.
-3. **It is discovered during an audit**, not during an incident - which is the worst
+3. **It is discovered during an audit**, not during an incident, which is the worst
    way to find out that a control has not been enforced for a year.
 
 The `Owner` tag requirement is not decoration. It is what makes a backed-up resource

@@ -15,7 +15,7 @@ plan that cannot be executed.
 ## The constraint that decides everything
 
 The keys have `Origin = EXTERNAL`. AWS KMS does not support automatic rotation for
-imported key material - there is no flag to enable. Rotation of a BYOK key means:
+imported key material, there is no flag to enable. Rotation of a BYOK key means:
 generate new material on the HSM, wrap it, import it, then call `RotateKeyOnDemand`.
 Every cycle, for every key.
 
@@ -44,8 +44,8 @@ period and then implement it. Here the rotation period decides whether the exist
 key estate survives the policy at all, so it has to be settled **before** any
 implementation work starts.
 
-If the answer is quarterly or shorter, the escape route - create a new key, retarget
-the alias, retain the old key for decryption of old data - has to be designed in from
+If the answer is quarterly or shorter, the escape route, create a new key, retarget
+the alias, retain the old key for decryption of old data, has to be designed in from
 the beginning, because it changes the automation, the key policies and the cost model.
 Discovering it in year six is a migration project under regulatory pressure.
 
@@ -73,7 +73,7 @@ Rotation does not change that; it adds new material for new encryption and keeps
 old versions for decryption.
 
 If a material version is lost, or is allowed to expire, the KMS key becomes unusable
-for that data - permanently. There is no AWS-side recovery, because AWS never held
+for that data, permanently. There is no AWS-side recovery, because AWS never held
 the material in the clear.
 
 The observable failure is not subtle:
@@ -125,13 +125,13 @@ Consumers reference `alias/prod-s3`; that alias points at the same key before an
 after. There is no application change, no config change and no Terraform diff.
 
 The existing discipline of putting aliases in front of every key is what makes this
-true, and it is worth saying so explicitly - it is the reason this scenario is an
+true, and it is worth saying so explicitly. It is the reason this scenario is an
 operations problem rather than a fleet-wide migration.
 
 ### Other impacts worth listing
 
 - **Cross-account consumers.** The keys are consumed cross-account. Key policies and
-  grants survive rotation untouched, so no consumer-side change is needed - but this
+  grants survive rotation untouched, so no consumer-side change is needed, but this
   should be verified in dev rather than assumed, because a broken grant is discovered
   by an outage.
 - **Cost.** Each additional material version is billed as a key version. Thirty keys
@@ -155,14 +155,14 @@ Two phases: a one-off design decision, then a repeatable per-key ceremony.
 3. Confirm the HSM escrow procedure works by **restoring** a test material version,
    not by asserting that backups exist.
 4. Build the inventory: every key, its aliases, its consumers, its grants, its
-   current material version. Roughly thirty keys - small enough to enumerate exactly,
+   current material version. Roughly thirty keys, small enough to enumerate exactly,
    and there is no excuse for not doing so.
 
 ### Phase 1 - the per-key ceremony
 
 ```
   HSM (on-premise)                    AWS KMS (Security account)
-  ─────────────────                   ──────────────────────────
+  -----------------                   --------------------------
   1. Generate new key material
      inside the HSM. It never
      leaves in the clear.
@@ -195,8 +195,8 @@ Two phases: a one-off design decision, then a repeatable per-key ceremony.
 
 The property that makes this safe is **step 4**. `ImportKeyMaterial` with
 `NEW_KEY_MATERIAL` stages the material without making it current. Nothing observable
-changes until step 6. So the expensive, hard-to-repeat part of the ceremony - the HSM
-work - is completed and verified before the only irreversible step is taken, and can
+changes until step 6. So the expensive, hard-to-repeat part of the ceremony, the HSM
+work. Is completed and verified before the only irreversible step is taken, and can
 be abandoned at no cost if verification fails.
 
 ### Phase 2 - rollout order
@@ -231,7 +231,7 @@ material for every key in the estate.
 ## Q3 - Monitoring compliance with an AWS managed service
 
 **The requirement is subtler than it first appears.** The ask is to identify, at any
-time, *resources* - a specific S3 bucket, RDS instance or DynamoDB table - that are
+time, *resources* - a specific S3 bucket, RDS instance or DynamoDB table, that are
 not compliant. Not keys. Resources.
 
 That distinction rules out the obvious answer.
@@ -255,26 +255,26 @@ reference from resource to key to rotation history:
 
 ```
   AWS Config records a change to an S3 bucket / RDS instance / DynamoDB table
-                                  │
-                                  ▼
+                                  |
+                                  v
                     Custom Config rule (Lambda)
-                                  │
+                                  |
               1. Read the resource's KMS key ARN from the
                  configuration item
               2. Resolve the alias to the key
               3. kms:ListKeyRotations on that key
               4. Compare the most recent rotation date against
                  the policy window (e.g. 365 days)
-                                  │
-                                  ▼
+                                  |
+                                  v
          COMPLIANT / NON_COMPLIANT, annotated with the key ARN
          and the actual last-rotation date
-                                  │
-                                  ▼
-        AWS Config aggregator (Security account)  ──►  Security Hub
-                                  │
-                                  ▼
-                      EventBridge ──► SNS / ticket
+                                  |
+                                  v
+        AWS Config aggregator (Security account)  -->  Security Hub
+                                  |
+                                  v
+                      EventBridge --> SNS / ticket
 ```
 
 Design points that matter:
@@ -364,7 +364,7 @@ Worth calling out as the strongest single control available:
 
 This means that even a fully compromised import role cannot quietly downgrade the
 wrapping algorithm. The control is enforced by KMS rather than by the correctness of
-the automation, which is the right place for it - the automation is the thing most
+the automation, which is the right place for it, the automation is the thing most
 likely to be compromised.
 
 ### What to reject

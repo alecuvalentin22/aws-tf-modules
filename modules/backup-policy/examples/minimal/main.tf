@@ -2,7 +2,7 @@
 # The smallest configuration that is still a real backup policy.
 #
 # One account, two Regions, no cross-account copy. Governance-mode locks, so it
-# can be destroyed again -- which is what makes it a safe first apply.
+# can be destroyed again, which is what makes it a safe first apply.
 ###############################################################################
 
 terraform {

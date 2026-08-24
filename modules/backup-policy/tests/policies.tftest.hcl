@@ -44,7 +44,7 @@ run "trust_policy_allows_only_aws_backup" {
 
 # A plain StringEquals on a context key the caller does not populate evaluates
 # to FALSE and denies the request. On an assume-role trust policy that means the
-# role is unassumable and NO backup job in the account ever runs -- with nothing
+# role is unassumable and NO backup job in the account ever runs, with nothing
 # failing at apply time to indicate it. AWS's own generated service role carries
 # no conditions at all; IfExists keeps the confused-deputy protection where the
 # keys are present without betting the whole policy on them always being so.
@@ -78,7 +78,7 @@ run "trust_policy_conditions_do_not_fail_closed_on_an_absent_key" {
 #   3. destination vault policy -> the source account                       (backup-vault)
 #   4. destination key policy   -> the source account                       (backup-vault)
 # Grant 2 is the one that is easy to miss, because grant 4 looks like it should
-# be enough -- but a key policy naming <account>:root only DELEGATES to that
+# be enough, but a key policy naming <account>:root only DELEGATES to that
 # account's IAM; it authorises nothing on its own.
 # --------------------------------------------------------------------------
 
@@ -104,7 +104,7 @@ run "role_can_use_the_external_destinations_key" {
       s.Sid == "UseVaultKeys" &&
       contains(s.Resource, "arn:aws:kms:eu-central-1:222222222222:key/33333333-3333-3333-3333-333333333333")
     ])
-    error_message = "Without an IAM allow on the DESTINATION key, every encrypted cross-account copy fails with AccessDenied -- nightly, after a clean apply."
+    error_message = "Without an IAM allow on the DESTINATION key, every encrypted cross-account copy fails with AccessDenied, nightly, after a clean apply."
   }
 }
 
@@ -144,7 +144,7 @@ run "key_permissions_are_scoped_to_the_vault_keys" {
 # alias/aws/sns is the AWS-MANAGED key. Its policy grants only this account's
 # IAM principals via kms:ViaService and cannot be edited, so AWS Backup,
 # EventBridge and CloudWatch cannot obtain kms:GenerateDataKey* on it and every
-# publish fails with KMSAccessDeniedException -- at delivery time, invisibly.
+# publish fails with KMSAccessDeniedException, at delivery time, invisibly.
 # That would silence the staleness alarm in particular, which is the one control
 # that detects a plan that has stopped running at all.
 # --------------------------------------------------------------------------

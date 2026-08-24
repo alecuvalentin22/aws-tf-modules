@@ -1,20 +1,7 @@
-###############################################################################
-# Monitoring for a self-managed GitLab.
-#
-# Ordered by what actually catches user-visible breakage, which is roughly the
-# inverse of the order these usually get implemented:
-#
-#   1. Synthetic canaries. The only checks that prove Git works end to end.
-#   2. Sidekiq queue latency. The earliest predictive signal available.
-#   3. Disk. The most common cause of a self-managed GitLab outage.
-#   4. Host health and backup freshness.
-#
-# The recurring theme is that silence is a failure mode. A dead host stops
-# publishing metrics, a stopped backup job emits no error, and an alarm that
-# treats missing data as "not breaching" goes GREEN at exactly the moment the
-# thing it watches dies. Every alarm here whose absence of data indicates
-# failure is set to breach on missing data, and there is a test asserting it.
-###############################################################################
+# Alarms whose absence of data means failure use treat_missing_data = "breaching".
+# A dead host stops publishing, so the opposite setting turns the alarm green at
+# the moment the platform dies.
+
 
 terraform {
   required_version = ">= 1.9.0"
@@ -68,14 +55,9 @@ resource "aws_sns_topic_subscription" "alarms" {
   endpoint  = each.value
 }
 
-###############################################################################
-# 1. Synthetic canaries
-#
-# A `git clone` over HTTPS and over SSH is the only check that proves the whole
-# path works: Gitaly, repository storage, authentication and the network. The
-# two protocols are separate failure domains, so an SSH outage is invisible to
-# every HTTPS check.
-###############################################################################
+# Canaries. A git clone over HTTPS and over SSH is the only check that exercises
+# Gitaly, storage, auth and the network in one go. The two transports are separate
+# failure domains, so an SSH outage is invisible to every HTTPS check.
 
 resource "aws_synthetics_canary" "this" {
   for_each = var.canaries
@@ -144,12 +126,8 @@ resource "aws_cloudwatch_metric_alarm" "canary_failed" {
   tags          = local.tags
 }
 
-###############################################################################
-# 2. Sidekiq queue latency
-#
-# Typically climbs 10 to 30 minutes before users notice anything, which makes it
-# the one metric here worth paging on ahead of impact rather than after it.
-###############################################################################
+# Sidekiq queue latency usually climbs 10 to 30 minutes before users notice, so
+# this is the one alarm here that fires ahead of impact rather than after it.
 
 resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency" {
   for_each = var.enable_sidekiq_alarms ? {
@@ -178,13 +156,6 @@ resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency" {
   ok_actions    = local.alarm_actions
   tags          = merge(local.tags, { Severity = each.value.severity })
 }
-
-###############################################################################
-# 3. Disk
-#
-# Repository disk usage is the single most important alarm on the platform: it
-# is the most common cause of an outage and the one with the most warning.
-###############################################################################
 
 resource "aws_cloudwatch_metric_alarm" "repository_disk" {
   for_each = local.agent_alarms_enabled ? local.disk_levels : {}
@@ -239,10 +210,6 @@ resource "aws_cloudwatch_metric_alarm" "memory" {
   ok_actions    = local.alarm_actions
   tags          = local.tags
 }
-
-###############################################################################
-# 4. Host health and backup freshness
-###############################################################################
 
 resource "aws_cloudwatch_metric_alarm" "instance_status" {
   alarm_name        = "${var.name}-instance-status"

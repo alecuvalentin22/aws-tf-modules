@@ -1,22 +1,8 @@
-###############################################################################
-# Restore testing
-#
-# The control that separates a backup policy from a backup hypothesis.
-#
-# AWS Backup restore testing picks a real recovery point inside a lookback
-# window, restores it, records whether the restore succeeded and how long it
-# took, then deletes the restored resource. The result is evidence -- an RTO
-# measurement and a pass/fail per resource type -- rather than an assertion.
-#
-# Neither Vault Lock nor cross-account copy tells you whether the data can be
-# read back. Only this does.
-#
-# One plan PER REGION, not one plan listing every vault. Restore testing is a
-# regional service: a plan in eu-central-1 cannot select recovery points from a
-# vault in eu-west-1. A single plan naming all of them would test only the local
-# vault and quietly skip the copies -- which is precisely the assumption this is
-# supposed to disprove.
-###############################################################################
+# One plan per Region, not one plan listing every vault. Restore testing is
+# regional: a plan in eu-central-1 cannot select recovery points from a vault in
+# eu-west-1, so a single plan naming all of them tests the local vault and skips
+# the copies.
+
 
 locals {
   # Vaults grouped by the Region they live in, so each Region's testing plan
@@ -81,11 +67,11 @@ resource "aws_backup_restore_testing_selection" "this" {
   # Note this is necessarily WIDER than the backup selection:
   # protected_resource_conditions supports only string_equals/string_not_equals,
   # so the Owner PATTERN (selection_required_tag_patterns) cannot be expressed
-  # here. Harmless -- a resource the plan never selected has no recovery points
-  # to restore -- but it is why the two conditions are not identical.
+  # here. Harmless, a resource the plan never selected has no recovery points
+  # to restore, but it is why the two conditions are not identical.
   #
   # protected_resource_conditions filters the PROTECTED RESOURCE by its own
-  # tags -- the source volume, instance or table -- not the recovery point. So
+  # tags, the source volume, instance or table, not the recovery point. So
   # the tags used here must be the ones the selection matches on, which are on
   # the resource. A recovery-point tag such as BackupRule is never present on
   # the protected resource, and conditioning on one produces a selection that

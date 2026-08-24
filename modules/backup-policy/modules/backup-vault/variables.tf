@@ -70,7 +70,7 @@ variable "source_account_ids" {
 variable "source_principal_arns" {
   description = <<-EOT
     Specific principals in the source accounts allowed to copy into this vault and use its
-    key -- normally the source account's AWS Backup service role.
+    key, normally the source account's AWS Backup service role.
 
     Empty falls back to the source account roots, which is what a caller can always supply
     but grants every principal in those accounts that IAM also allows. Naming the role is
@@ -175,7 +175,7 @@ variable "force_destroy" {
     Allow `terraform destroy` to delete the vault along with the recovery points it holds.
 
     False everywhere that matters. Useful for a throwaway sandbox, and irrelevant once a
-    compliance-mode lock is committed -- that lock refuses the deletion regardless of this
+    compliance-mode lock is committed, that lock refuses the deletion regardless of this
     setting, which is the point of it.
   EOT
   type        = bool

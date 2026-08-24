@@ -76,7 +76,7 @@ run "the_backup_role_can_reach_every_destination" {
   command = apply
 
   # A copy action fails with AccessDenied if the role cannot write to the
-  # destination vault or use its key -- and the failure surfaces as a copy job
+  # destination vault or use its key, and the failure surfaces as a copy job
   # error at 02:00, not at apply time.
   assert {
     condition     = length(local.all_destination_vault_arns) == 5

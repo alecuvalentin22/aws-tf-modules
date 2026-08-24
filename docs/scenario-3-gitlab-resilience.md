@@ -49,15 +49,15 @@ cheapest one.
   with no repository on disk, merge requests referencing commits that are not there,
   CI pipelines pointing at missing artifacts. GitLab has no reconciliation tool for
   this. It is the most under-appreciated risk in the design, and it only reveals
-  itself during an actual disaster - which is the worst possible time to discover it.
+  itself during an actual disaster, which is the worst possible time to discover it.
 
 **3. Backups are unproven and probably incomplete.**
 
 - No stated RPO or RTO.
 - No cross-region copy - a regional event is unrecoverable.
-- **No evidence a restore has ever been tested.** An untested backup is a hypothesis.
+- **No evidence a restore has ever been tested.**
 - And the specific trap: **`gitlab-secrets.json` is routinely excluded from
-  `gitlab-backup`**. Without it, a restored database is useless - 2FA secrets, CI/CD
+  `gitlab-backup`**. Without it, a restored database is useless, 2FA secrets, CI/CD
   variables, runner tokens and integration credentials are all encrypted with keys
   held in that file. Teams discover this during their first real restore.
 
@@ -76,7 +76,7 @@ migrations that must complete between hops. On a single instance every hop is an
 outage, and a failed hop has no rollback.
 
 **7. Monitoring runs on the instance it monitors.** When the box dies, the monitoring
-dies with it - so the alert that matters most is the one guaranteed not to fire.
+dies with it, so the alert that matters most is the one guaranteed not to fire.
 
 **8. Configuration is not reproducible.** A hand-configured Omnibus instance cannot be
 rebuilt identically under pressure.
@@ -92,15 +92,15 @@ Two options, because the honest answer is that full HA is not always the right b
 The highest return per unit of effort and cost:
 
 ```
-              Route 53  ──►  ALB (3 AZs)
-                               │
-                    ┌──────────┴──────────┐
-                    │  ASG: min 1 max 1   │   spans 3 AZs
-                    │  GitLab Omnibus     │   rebuilt from a golden AMI
-                    └──────────┬──────────┘
-                               │
-        ┌──────────────┬───────┴────────┬──────────────┐
-        ▼              ▼                ▼              ▼
+              Route 53  -->  ALB (3 AZs)
+                               |
+                    +----------+----------+
+                    |  ASG: min 1 max 1   |   spans 3 AZs
+                    |  GitLab Omnibus     |   rebuilt from a golden AMI
+                    +----------+----------+
+                               |
+        +--------------+-------+--------+--------------+
+        v              v                v              v
    RDS Multi-AZ   ElastiCache      S3 (artifacts,   EFS or EBS
    (+ RDS Proxy)  Redis Multi-AZ    LFS, registry,  (repos only)
                                     uploads, backups)
@@ -126,7 +126,7 @@ Changes from today:
 | Cost | 1x | **~1.6x** |
 
 Git repositories remain the one stateful thing on the instance, so repository recovery
-still depends on snapshot restore - but the blast radius has shrunk from "everything"
+still depends on snapshot restore, but the blast radius has shrunk from "everything"
 to "repositories only", and the split-brain risk is contained to a single pair of
 timelines rather than four.
 
@@ -162,7 +162,7 @@ Three honest caveats, because this is where these designs usually go wrong:
 
 **Option A now, Option B when the platform's criticality justifies 3-4x.** Option A
 removes the AZ single point of failure, makes the RDS Multi-AZ spend meaningful, and
-gets RTO from hours to minutes - which is the bulk of the available risk reduction.
+gets RTO from hours to minutes, which is the bulk of the available risk reduction.
 It is also a strictly smaller step, and it is on the path to Option B rather than a
 detour from it.
 
@@ -201,7 +201,7 @@ push. CloudWatch Synthetics canaries running from outside the instance:
 | CI pipeline end to end | 30 min | Runners are picking up jobs |
 
 The `git clone` canary is the important one. It is the only check that exercises
-Gitaly, the repository storage, authentication and the network path in one go - which
+Gitaly, the repository storage, authentication and the network path in one go, which
 is the actual user journey.
 
 ### 2. Health endpoint choice - a real trap
@@ -244,7 +244,7 @@ entirely preventable with warning:
 | 80% | Warning alert |
 | 90% | Page |
 
-Plus memory utilisation, swap usage (a Gitaly OOM precursor) and inode usage - the
+Plus memory utilisation, swap usage (a Gitaly OOM precursor) and inode usage, the
 last one bites on repositories with very many small files and is missed by
 percentage-of-bytes alarms.
 
@@ -255,8 +255,8 @@ The classic single-node monitoring bug, and it is worth being explicit about:
 > A dead host stops sending metrics. An alarm that treats missing data as "not
 > breaching" goes **green** at exactly the moment the system dies.
 
-Every alarm whose absence of data indicates failure - canaries, host health, backup
-freshness, Sidekiq liveness - must treat missing data as breaching. Getting this
+Every alarm whose absence of data indicates failure, canaries, host health, backup
+freshness, Sidekiq liveness, must treat missing data as breaching. Getting this
 backwards produces a monitoring system that is reassuring precisely when it should be
 paging.
 
@@ -274,7 +274,7 @@ Alarm on the S3 object's age rather than on the job's exit code, so a job that
 CloudWatch, Synthetics and the alarms all run outside the GitLab host, so that they
 survive its death. If a Prometheus/Grafana stack is wanted for GitLab's own detailed
 metrics, run it on separate infrastructure (or Amazon Managed Prometheus/Grafana)
-scraping the instance - never on it.
+scraping the instance, never on it.
 
 ### 8. Logs and audit
 
@@ -296,44 +296,44 @@ GitLab upgrades must traverse **required version stops**, with background migrat
 completing between each hop. The path from the current version to the target depends
 on the current version, so the automation has to *compute* the path and then walk it,
 pausing between hops until migrations drain. That is a state machine with waits,
-retries and conditional branches - a shell script that models it will be wrong.
+retries and conditional branches, a shell script that models it will be wrong.
 
 **AWS Step Functions**, with the gates below. The gates are what make it safe; the
 automation is just what makes it repeatable.
 
 ```
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 1. PRE-FLIGHT                                               │
-  │    - current version, target version                        │
-  │    - compute the required upgrade path                      │
-  │    - ANY pending background migration  ──► ABORT            │
-  │    - disk space sufficient?            ──► ABORT            │
-  │    - health checks green?              ──► ABORT            │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 2. BACKUP GATE  (hard gate - no skip flag exists)           │
-  │    - gitlab-backup create                                   │
-  │    - back up gitlab-secrets.json + /etc/gitlab              │
-  │    - VERIFY the artifacts exist and are non-empty           │
-  │    - copy cross-region                                      │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 3. DRAIN                                                    │
-  │    - deregister from the ALB target group                   │
-  │    - pause runners, let in-flight Sidekiq jobs finish        │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 4. UPGRADE ONE HOP (blue/green)                             │
-  │    - launch a new instance from the new AMI                 │
-  │    - EXACTLY ONE node runs migrations                       │
-  │    - wait for background migrations to drain                │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 5. POST-CHECKS                                              │
-  │    - /-/readiness green                                     │
-  │    - gitlab-rake gitlab:check                               │
-  │    - canaries pass: clone over HTTPS and SSH, web login     │
-  │    - FAIL ──► ROLLBACK                                      │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 6. MORE HOPS?  ──yes──► back to 3                           │
-  │              ──no───► register in ALB, resume runners       │
-  └─────────────────────────────────────────────────────────────┘
+  +-------------------------------------------------------------+
+  | 1. PRE-FLIGHT                                               |
+  |    - current version, target version                        |
+  |    - compute the required upgrade path                      |
+  |    - ANY pending background migration  --> ABORT            |
+  |    - disk space sufficient?            --> ABORT            |
+  |    - health checks green?              --> ABORT            |
+  +-------------------------------------------------------------+
+  | 2. BACKUP GATE  (hard gate - no skip flag exists)           |
+  |    - gitlab-backup create                                   |
+  |    - back up gitlab-secrets.json + /etc/gitlab              |
+  |    - VERIFY the artifacts exist and are non-empty           |
+  |    - copy cross-region                                      |
+  +-------------------------------------------------------------+
+  | 3. DRAIN                                                    |
+  |    - deregister from the ALB target group                   |
+  |    - pause runners, let in-flight Sidekiq jobs finish        |
+  +-------------------------------------------------------------+
+  | 4. UPGRADE ONE HOP (blue/green)                             |
+  |    - launch a new instance from the new AMI                 |
+  |    - EXACTLY ONE node runs migrations                       |
+  |    - wait for background migrations to drain                |
+  +-------------------------------------------------------------+
+  | 5. POST-CHECKS                                              |
+  |    - /-/readiness green                                     |
+  |    - gitlab-rake gitlab:check                               |
+  |    - canaries pass: clone over HTTPS and SSH, web login     |
+  |    - FAIL --> ROLLBACK                                      |
+  +-------------------------------------------------------------+
+  | 6. MORE HOPS?  --yes--> back to 3                           |
+  |              --no---> register in ALB, resume runners       |
+  +-------------------------------------------------------------+
 ```
 
 ### The gates, and why each exists
@@ -357,7 +357,7 @@ at once:
 
 1. It rehearses the upgrade path on real data before it runs in production.
 2. It **is** the restore test that nobody currently performs (Q1.3).
-3. It continuously validates that the backup - including `gitlab-secrets.json` - is
+3. It continuously validates that the backup. Including `gitlab-secrets.json` - is
    actually restorable, rather than merely present.
 
 A restore procedure that has not run in the last week is a procedure of unknown
@@ -366,7 +366,7 @@ status.
 ### Configuration and the rest of the runbook
 
 - **Configuration as code.** `/etc/gitlab/gitlab.rb` rendered from a template, applied
-  by Ansible or user-data. No hand edits - the instance must be reproducible, which
+  by Ansible or user-data. No hand edits, the instance must be reproducible, which
   is also what makes the ASG in Q2 safe.
 - **Golden AMI built in CI** on every GitLab release, with the upgrade path validated
   in staging before the AMI is promoted.

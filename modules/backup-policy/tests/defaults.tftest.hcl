@@ -1,7 +1,7 @@
 # Behaviour of the module as shipped.
 #
 # Every run uses a mocked provider, so `terraform test` needs no AWS account and
-# no credentials -- which is what makes it usable as a required check in CI.
+# no credentials, which is what makes it usable as a required check in CI.
 # `command = apply` against mocks is what makes computed attributes (rule sets,
 # rendered conditions, alarm settings) readable in an assertion; nothing is
 # created anywhere.
@@ -114,7 +114,7 @@ run "each_vault_is_distinct_and_separately_encrypted" {
   # One key per vault, plus the external destination's declared key. The
   # provider validates KMS ARNs client-side, so the mock returns a fixed one and
   # distinctness of the VALUES is not observable here; the count is, and it is
-  # the invariant that matters -- a shared key would make the cross-Region copy
+  # the invariant that matters, a shared key would make the cross-Region copy
   # depend on the source Region's key.
   assert {
     condition     = length(local.vault_key_arns) == 3
@@ -123,7 +123,7 @@ run "each_vault_is_distinct_and_separately_encrypted" {
 
   # Restore testing is a REGIONAL service: a plan in one Region cannot select a
   # vault in another. One plan per Region, each covering only the vaults it can
-  # reach -- otherwise the copies are never restore-tested, which is exactly the
+  # reach, otherwise the copies are never restore-tested, which is exactly the
   # assumption restore testing exists to disprove.
   assert {
     condition     = length(aws_backup_restore_testing_plan.this) == 2

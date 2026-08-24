@@ -1,16 +1,7 @@
-###############################################################################
-# Notifications and alarms
-#
-# Three layers, because they detect different failures:
-#
-#   Vault notifications  per-vault, per-Region. Catches a job that failed at the
-#                        vault. Cannot cross a Region, hence one topic per Region.
-#   EventBridge rule     catches copy jobs that fail before ever reaching the
-#                        destination vault, which vault notifications never see.
-#   CloudWatch alarms    turn events into state. A failure alarm can be
-#                        dashboarded and escalated; a staleness alarm catches the
-#                        failure mode that produces no event at all.
-###############################################################################
+# Three layers, because they catch different failures: vault notifications (per
+# vault, per Region), an EventBridge rule for copy jobs that fail before reaching
+# the destination vault, and CloudWatch alarms to turn events into state.
+
 
 ###############################################################################
 # Topic encryption
@@ -19,7 +10,7 @@
 # grants only this account's IAM principals via kms:ViaService, and it cannot be
 # edited. AWS Backup, EventBridge and CloudWatch therefore cannot obtain
 # kms:GenerateDataKey* on it, so every publish fails with
-# KMSAccessDeniedException -- at delivery time, invisibly. Nothing shows up in
+# KMSAccessDeniedException, at delivery time, invisibly. Nothing shows up in
 # the apply, in the alarm state or in the SNS console; you find out when a
 # backup fails and nobody is paged.
 #
@@ -98,7 +89,7 @@ resource "aws_sns_topic" "backup" {
 # Created here rather than inside the backup-vault module so they can carry a
 # depends_on to the topic policy. PutBackupVaultNotifications validates that the
 # topic policy permits backup.amazonaws.com to publish, so without this edge a
-# cold apply can issue the call before the policy is attached -- a
+# cold apply can issue the call before the policy is attached, a
 # non-deterministic first-apply failure that succeeds on re-run and therefore
 # looks like flakiness rather than a missing dependency.
 ###############################################################################
@@ -169,7 +160,7 @@ locals {
             Resource  = "arn:${local.partition}:sns:${r}:${local.account_id}:${var.name}-events"
             # IfExists, matching the KMS key policy that gates the same publish.
             # A plain StringEquals on a context key a service does not populate
-            # evaluates FALSE and drops the message -- the same silent
+            # evaluates FALSE and drops the message, the same silent
             # delivery failure this file's header comment is about. The two
             # policies must agree, or the careful one is wasted.
             Condition = {
@@ -297,7 +288,7 @@ resource "aws_cloudwatch_metric_alarm" "stale" {
   comparison_operator = "LessThanThreshold"
 
   # The whole point: absence of data IS the failure. Getting this backwards is
-  # the classic monitoring bug -- the alarm stays green precisely when the system
+  # the classic monitoring bug, the alarm stays green precisely when the system
   # has stopped working.
   treat_missing_data = "breaching"
 

@@ -5,7 +5,7 @@
 # Kept as a leaf module because Terraform cannot iterate over provider
 # configurations. Composing this module N times is the only way to express
 # "the same vault, in a different place" without copy-pasting a KMS key, a
-# lock and a policy per location -- which is what the naive shape of this
+# lock and a policy per location, which is what the naive shape of this
 # module ends up doing, and those copies then drift.
 #
 # Policies are built with jsonencode rather than aws_iam_policy_document on
@@ -98,9 +98,8 @@ locals {
           Action    = local.kms_data_plane_actions
           Resource  = "*"
           # Confused-deputy guard: AWS Backup may use this key only when acting
-          # for an account we expect. IfExists so that an interaction which does
-          # not populate the key is not denied outright -- a plain StringEquals
-          # on an absent context key evaluates false and would break the copy.
+          # for an account we expect. IfExists, because a plain StringEquals on
+          # an absent context key evaluates false and would break the copy.
           Condition = {
             StringEqualsIfExists = {
               "aws:SourceAccount" = distinct(concat([local.account_id], var.source_account_ids))
@@ -124,7 +123,7 @@ locals {
 
       # Cross-account copy: the SOURCE account's backup role calls KMS in THIS
       # account to write the copy. Without this the copy job fails with
-      # AccessDenied on the destination key -- the single most common reason a
+      # AccessDenied on the destination key, the single most common reason a
       # cross-account copy silently never lands.
       #
       # Scoped hard. Granting an external account unconditional data-plane
@@ -145,7 +144,7 @@ locals {
             # does not populate evaluates to FALSE and denies the request. AWS
             # Backup may authorise its copy-time KMS calls through a grant rather
             # than through this statement, in which case kms:ViaService is absent
-            # -- and a fail-closed condition would deny the very operation this
+            #, and a fail-closed condition would deny the very operation this
             # statement exists to permit, nightly, after a clean apply.
             #
             # A wildcard Region, because a cross-account destination may also be
@@ -216,7 +215,7 @@ resource "aws_backup_vault" "this" {
     }
 
     # force_destroy deletes the vault's recovery points before the vault, which
-    # needs backup:DeleteRecoveryPoint and backup:DeleteBackupVault -- both denied
+    # needs backup:DeleteRecoveryPoint and backup:DeleteBackupVault, both denied
     # by the deny-delete policy to every principal not on the exemption list. The
     # two settings silently conflict, and the symptom is an AccessDenied on destroy
     # with nothing to say which of them caused it.
@@ -248,7 +247,7 @@ resource "aws_backup_vault" "this" {
 #                    removed, so it holds against a compromised administrator.
 #                    It cannot be applied retroactively to tighten a mistake.
 #   Access policy    an ordinary resource policy. Removable by an administrator,
-#                    so it is not a ransomware control -- but it is editable,
+#                    so it is not a ransomware control, but it is editable,
 #                    takes effect immediately, and covers the governance-mode
 #                    window before the lock is committed.
 ###############################################################################
@@ -270,7 +269,7 @@ resource "aws_backup_vault_lock_configuration" "this" {
 
         A compliance lock is permanent once its ${var.lock.changeable_for_days}-day grace period elapses:
         retention cannot be shortened, recovery points cannot be deleted early, the vault cannot
-        be destroyed while it holds them, and no principal -- including the account root -- can
+        be destroyed while it holds them, and no principal. Including the account root, can
         undo it.
 
         Validate in governance mode first (lock.mode = "governance"), prove a backup, a copy and a
@@ -302,7 +301,7 @@ locals {
       # Note what is NOT denied here: backup:PutBackupVaultAccessPolicy and
       # backup:DeleteBackupVaultAccessPolicy. Denying those with Principal "*"
       # makes the policy unmodifiable and unremovable by the very role that
-      # created it -- so the vault can never be updated to add a source account
+      # created it, so the vault can never be updated to add a source account
       # or a break-glass exemption, and `terraform destroy` can never succeed.
       # A policy that cannot be corrected is a lockout, not a control; Vault
       # Lock is what provides the tamper-proof guarantee.

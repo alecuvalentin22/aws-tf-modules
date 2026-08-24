@@ -20,7 +20,7 @@ variable "tags" {
 }
 
 ###############################################################################
-# PLAN DEFINITION -- frequency, retention, encryption
+# PLAN DEFINITION, frequency, retention, encryption
 ###############################################################################
 
 variable "rules" {
@@ -44,7 +44,7 @@ variable "rules" {
 
       copy_to                  Logical destinations this rule copies to. Each entry must be a
                                key of `copy_destinations`. A copy action inherits its rule's
-                               schedule -- AWS Backup has no independent copy frequency -- so a
+                               schedule, AWS Backup has no independent copy frequency, so a
                                different copy cadence is expressed as a different rule.
 
       copy_retention           Per-destination lifecycle override, keyed by destination. Any
@@ -79,7 +79,7 @@ variable "rules" {
     # Attributes are optional with NO default, so an unset field stays null and
     # is distinguishable from an explicit false. That is what lets an override
     # be merged field by field over `retention` instead of replacing it
-    # wholesale -- a partial override that silently dropped cold_storage_after
+    # wholesale, a partial override that silently dropped cold_storage_after
     # would keep a seven-year copy in warm storage.
     copy_retention = optional(map(object({
       delete_after       = optional(number)
@@ -88,7 +88,7 @@ variable "rules" {
       # Merging field by field means null has to mean "inherit", which leaves no
       # way to say "no cold tier on this hop". This is that sentinel. Without it a
       # short WARM operational copy of a rule that tiers to cold is inexpressible
-      # -- and worse, it inherits a cold transition that makes restores take hours.
+      #, and worse, it inherits a cold transition that makes restores take hours.
       disable_cold_storage                      = optional(bool, false)
       opt_in_to_archive_for_supported_resources = optional(bool)
     })), {})
@@ -149,8 +149,8 @@ variable "rules" {
   # AWS Backup rejects a lifecycle whose cold-storage transition is less than 90 days
   # before expiry, because the archive tier has a 90-day minimum charge.
   #
-  # Checked against the EFFECTIVE lifecycle of each copy -- the override merged
-  # field by field over the rule's own retention -- because that is what AWS
+  # Checked against the EFFECTIVE lifecycle of each copy, the override merged
+  # field by field over the rule's own retention, because that is what AWS
   # will actually be asked to apply. Validating the override in isolation would
   # miss a partial override that inherits an incompatible cold_storage_after.
   validation {
@@ -254,7 +254,7 @@ variable "rules" {
 }
 
 ###############################################################################
-# COPY DESTINATIONS -- cross-Region and cross-account targets
+# COPY DESTINATIONS, cross-Region and cross-account targets
 ###############################################################################
 
 variable "primary_vault" {
@@ -286,12 +286,12 @@ variable "copy_destinations" {
 
     Two kinds:
 
-      Managed  -- `region` is set and `vault_arn` is null. The module creates the vault,
+      Managed:  `region` is set and `vault_arn` is null. The module creates the vault,
                   its KMS key and its Vault Lock in that Region of THIS account, using the
                   AWS provider's per-resource `region` argument. Any number of Regions works;
                   no provider aliases are needed.
 
-      External -- `vault_arn` is set. The module only references it. This is how a
+      External, `vault_arn` is set. The module only references it. This is how a
                   cross-ACCOUNT destination is wired, because a different account needs
                   different credentials and therefore its own provider and, in practice,
                   its own state. Deploy `./modules/backup-vault` in the backup account with
@@ -339,7 +339,7 @@ variable "copy_destinations" {
     lock_max_retention_days = optional(number)
 
     # External destinations only: the ARN of the KMS key encrypting the
-    # destination vault. Required for an encrypted cross-account copy -- the
+    # destination vault. Required for an encrypted cross-account copy, the
     # destination key policy delegating to `<source>:root` does not by itself
     # authorise anything; the source role also needs an IAM allow on that key.
     kms_key_arn_external = optional(string)
@@ -405,7 +405,7 @@ variable "confirm_irreversible_compliance_lock" {
 
 variable "selection_required_tags" {
   description = <<-EOT
-    Tags a resource must carry -- ALL of them -- to be included in the plan.
+    Tags a resource must carry, ALL of them, to be included in the plan.
 
     Rendered as `condition { string_equals { ... } }`, which AWS Backup evaluates with AND.
     Multiple `selection_tag` blocks would be evaluated with OR, so a resource tagged
@@ -431,7 +431,7 @@ variable "selection_required_tag_patterns" {
     The default enforces that an Owner tag exists and looks like an address. That is
     deliberate rather than an empty default: the requirement is `ToBackup=true` AND
     `Owner=<owner@...>`, and a module whose defaults satisfy only half of it reproduces the
-    exact gap it was built to prevent -- just expressed as a missing condition rather than
+    exact gap it was built to prevent, just expressed as a missing condition rather than
     the wrong operator. Narrow it to your own domain, e.g. { Owner = "*@example.com" }.
 
     Set to {} only if ownership genuinely is not required.
@@ -487,7 +487,7 @@ variable "enable_cross_account_backup_global_setting" {
 }
 
 ###############################################################################
-# Operational controls -- notifications, restore testing, audit
+# Operational controls, notifications, restore testing, audit
 ###############################################################################
 
 variable "enable_notifications" {
@@ -535,7 +535,7 @@ variable "enable_staleness_alarm" {
     Alarm when no backup job has SUCCEEDED within staleness_alarm_period_hours.
 
     This is the one alarm that catches the failure mode the others cannot: a plan that stopped
-    running at all -- a deleted selection, a revoked role, a resource type that was never opted
+    running at all, a deleted selection, a revoked role, a resource type that was never opted
     in. It uses treat_missing_data = "breaching", because silence is exactly the symptom.
   EOT
   type        = bool
@@ -610,7 +610,7 @@ variable "restore_testing" {
 variable "restore_testing_iam_role_arn" {
   description = <<-EOT
     Role AWS Backup assumes to perform restore tests. Restore is a genuinely privileged
-    operation -- it creates resources -- so it is not folded into the backup role by default.
+    operation. It creates resources, so it is not folded into the backup role by default.
     Null reuses the module's backup role, which also carries the AWS restore policies.
   EOT
   type        = string
@@ -661,7 +661,7 @@ variable "enable_deny_delete_policy" {
 
 variable "deny_delete_principals_except" {
   description = <<-EOT
-    Principal ARNs exempt from the deny-delete vault policy -- typically a break-glass role.
+    Principal ARNs exempt from the deny-delete vault policy, typically a break-glass role.
     Empty denies every principal.
 
     Exempt from the POLICY only. Nothing is exempt from Vault Lock, which is the point of it.
@@ -682,7 +682,7 @@ variable "acknowledge_unchecked_copy_destinations" {
 
     The plan-time retention check is this module's headline guarantee, and for an EXTERNAL
     destination it can only run if the caller supplies `lock_min_retention_days` /
-    `lock_max_retention_days` -- the module cannot read a Vault Lock in another account.
+    `lock_max_retention_days`, the module cannot read a Vault Lock in another account.
 
     Left false so that omitting them is an error rather than a silent skip. Failing open
     with no signal is the wrong default for a guardrail, and the cross-account hop is both
@@ -701,7 +701,7 @@ variable "audit_scope_tag" {
 
     Null derives it from `selection_required_tags` when that holds exactly one entry, and
     omits the scope otherwise. AWS's ControlScope accepts at most one tag, so the module
-    cannot simply pass the whole selection through -- and the pattern-matched tags
+    cannot simply pass the whole selection through, and the pattern-matched tags
     (`selection_required_tag_patterns`) are not expressible in a scope at all.
 
     The consequence is worth knowing: the framework's scope is necessarily WIDER than the

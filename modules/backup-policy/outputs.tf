@@ -98,7 +98,7 @@ output "audit_framework_arn" {
 output "effective_copy_matrix" {
   description = <<-EOT
     Which rule copies where, with the retention applied at each hop. Rendered as a plain map so
-    it can be diffed in review and pasted into a change record -- the copy topology is the part
+    it can be diffed in review and pasted into a change record, the copy topology is the part
     of a backup policy most likely to be misread from the Terraform alone.
   EOT
   value = {

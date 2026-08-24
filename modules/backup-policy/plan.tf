@@ -7,7 +7,7 @@
 #
 # AWS Backup has no independent copy frequency: a copy_action inherits the
 # schedule of the rule that owns it. "Cross-Region copy with a defined frequency"
-# is therefore expressed as which rules carry which copy actions -- the default
+# is therefore expressed as which rules carry which copy actions, the default
 # copies dailies cross-Region only, and sends weeklies and monthlies to the
 # isolated account too.
 ###############################################################################
@@ -87,7 +87,7 @@ resource "aws_backup_plan" "this" {
 
     # Finding the module cannot check is a finding the operator must be told
     # about. Silence here would mean the headline guarantee is inoperative on
-    # the cross-account hop -- the destination with the least visibility and the
+    # the cross-account hop, the destination with the least visibility and the
     # most likely to carry a stricter compliance lock.
     precondition {
       condition     = var.acknowledge_unchecked_copy_destinations || length(local.unchecked_destinations) == 0
@@ -124,7 +124,7 @@ resource "aws_backup_plan" "this" {
     # Without both halves the copy job fails with AccessDenied every night.
     # Deliberately NOT waivable by acknowledge_unchecked_copy_destinations. They
     # are unrelated failures, and sharing one flag meant an unlocked sandbox
-    # Region -- an ordinary, legitimate choice -- switched off this check too.
+    # Region, an ordinary, legitimate choice, switched off this check too.
     precondition {
       condition     = length(local.external_destinations_missing_key) == 0
       error_message = <<-EOT
@@ -132,7 +132,7 @@ resource "aws_backup_plan" "this" {
 
         A cross-account copy of an encrypted resource re-encrypts with a key in the
         destination account. The destination key policy granting arn:aws:iam::<this account>:root
-        DELEGATES to this account's IAM -- it does not grant any principal here. The backup role
+        DELEGATES to this account's IAM. It does not grant any principal here. The backup role
         also needs an IAM allow naming that key, which this module cannot construct without
         its ARN.
 

@@ -50,19 +50,19 @@ cannot read a Vault Lock in another account, so the caller supplies
 **error** unless `acknowledge_unchecked_copy_destinations` is set, and the
 `unvalidated_retention_targets` output names the omission either way.
 
-An earlier version skipped the check silently. That was wrong in a specific way worth
+An earlier version skipped the check with no diagnostic. That was wrong in a specific way worth
 recording: it made the module's headline guarantee inoperative on precisely the hop with
 the least visibility and the strictest lock, with no signal anywhere. Failing open is
 sometimes the right default; failing open *silently*, on a guardrail whose entire value
 is catching this class of error, is not.
 
-Guessing a window instead would be worse still - it would either block valid
+Guessing a window instead would be worse still. It would either block valid
 configurations or give false assurance.
 
 **A lock deliberately turned off is not the same thing.** `lock.enabled = false` on a
 vault this module can see is a stated intent, not an unknown, so it does not require an
 acknowledgement. It is still reported in `unvalidated_retention_targets`, and that
-reporting covers the primary vault as well as the copy destinations - the vault every
+reporting covers the primary vault as well as the copy destinations, the vault every
 backup job writes to first should not be the one omission nobody sees.
 
 ## Related checks in the same place
@@ -73,9 +73,9 @@ Other AWS constraints that also fail only at run time, moved to plan time:
 | --- | --- |
 | `delete_after >= cold_storage_after + 90` | The archive tier has a 90-day minimum charge; earlier deletion costs more, and AWS rejects the lifecycle |
 | Continuous backup requires `delete_after <= 35` and no cold storage | PITR is capped at 35 days and cannot be tiered |
-| Archive opt-in requires `cold_storage_after` | Otherwise silently does nothing |
+| Archive opt-in requires `cold_storage_after` | Otherwise a no-op |
 | `copy_to` names a defined destination | A typo would otherwise produce a plan with a missing copy |
-| `copy_retention` key appears in `copy_to` | An override for a destination not copied to is silently ignored |
+| `copy_retention` key appears in `copy_to` | An override for a destination not copied to is ignored |
 
 ## Consequences
 
@@ -83,5 +83,4 @@ Other AWS constraints that also fail only at run time, moved to plan time:
   That is the intent: they are configurations AWS would then reject nightly.
 - The checks live in `locals.tf` and `plan.tf` preconditions and must be kept in step
   with AWS's own constraints if those change.
-- Every one of them has a test that supplies the bad configuration and asserts the
-  refusal. A guardrail with no test proving it fires is decoration.
+- Each one has a test that supplies the bad configuration and checks it is rejected.
