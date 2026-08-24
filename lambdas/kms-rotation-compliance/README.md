@@ -11,14 +11,14 @@ reasons:
 
 1. Its own documentation states it **does not apply to keys with imported (EXTERNAL)
    key material**. Every key in this estate is BYOK, so the rule is structurally
-   non-functional — and it reports COMPLIANT, which is worse than reporting nothing.
+   non-functional - and it reports COMPLIANT, which is worse than reporting nothing.
 2. It evaluates `AWS::KMS::Key`. It answers *"is this key rotated?"*, not *"is this
    database protected by a rotated key?"*. The requirement is to name the
    **resources**, so an operator knows which instance to act on.
 
 ## What this does
 
-Evaluates the resource types and walks **resource → KMS key → rotation history**:
+Evaluates the resource types and walks **resource -> KMS key -> rotation history**:
 
 ```
 Config records a change to an RDS instance / DynamoDB table / S3 bucket
@@ -46,7 +46,7 @@ NON_COMPLIANT  Encrypted by arn:aws:kms:eu-central-1:111111111111:key/abcd-1234
 | --- | --- |
 | An AWS-managed key is a **distinct** finding from a stale CMK | Different remediation. Conflating them buries the stale-CMK findings |
 | A key that has **never rotated** is compliant until its *creation* date falls outside the window | Otherwise every newly created key is flagged on day one |
-| A key that cannot be read **raises** rather than passing | The cross-account read is the part most likely to be misconfigured. Failing open would report COMPLIANT for every account that cannot reach the Security account — the exact opposite of the requirement |
+| A key that cannot be read **raises** rather than passing | The cross-account read is the part most likely to be misconfigured. Failing open would report COMPLIANT for every account that cannot reach the Security account - the exact opposite of the requirement |
 | Deleted resources return `NOT_APPLICABLE` | Otherwise the last finding persists in Config and the dashboard never returns to green |
 | BYOK origin is called out in the annotation | Remediation is an HSM ceremony, not a checkbox |
 | Annotations truncated to 256 characters | Config's limit |
@@ -65,7 +65,7 @@ account that owns the keys and fails everywhere else.
 | Parameter | Default | |
 | --- | --- | --- |
 | `maxKeyAgeDays` | `365` | Policy window |
-| `kmsReadRoleArn` | — | Role in the Security account |
+| `kmsReadRoleArn` | - | Role in the Security account |
 
 ## Tests
 
@@ -75,8 +75,8 @@ python3 -m unittest discover -s lambdas/kms-rotation-compliance/tests \
 ```
 
 28 tests, no boto3, no credentials, no network. The decision logic takes its AWS access
-through injected callables, which is what makes every branch — including the
-cross-account failure path and both sides of the policy boundary — reachable from a
+through injected callables, which is what makes every branch - including the
+cross-account failure path and both sides of the policy boundary - reachable from a
 plain unittest run. A Config rule whose logic can only be exercised by deploying it is
 one nobody changes with confidence.
 

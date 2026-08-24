@@ -59,13 +59,13 @@ Regions) and [`examples/complete`](examples/complete) (the full two-account topo
         │ created by this module    │   │ referenced by ARN          │
         └───────────────────────────┘   └────────────────────────────┘
 
-  plus: service role · SNS + EventBridge on failures · failure and staleness alarms
-        · restore testing plan · Audit Manager framework · optional report plans
+  plus: service role - SNS + EventBridge on failures - failure and staleness alarms
+        - restore testing plan - Audit Manager framework - optional report plans
 ```
 
 **Managed** destinations set `region`; the module builds the vault, its key and its
 lock. **External** destinations set `vault_arn`; the module only references them. That
-split exists because a different account needs different credentials — see
+split exists because a different account needs different credentials - see
 [ADR-0004](../../docs/adr/0004-module-composition-and-account-boundaries.md).
 
 ---
@@ -75,7 +75,7 @@ split exists because a different account needs different credentials — see
 | | |
 | --- | --- |
 | Terraform | `>= 1.9.0` |
-| AWS provider | `>= 6.0.0, < 7.0.0` — v6 is required for the per-resource `region` argument |
+| AWS provider | `>= 6.0.0, < 7.0.0` - v6 is required for the per-resource `region` argument |
 
 ---
 
@@ -83,7 +83,7 @@ split exists because a different account needs different credentials — see
 
 Full descriptions are on each variable in [`variables.tf`](variables.tf).
 
-### `rules` — frequency, retention, and where copies go
+### `rules` - frequency, retention, and where copies go
 
 ```hcl
 rules = [
@@ -143,7 +143,7 @@ copy_destinations = {
 }
 ```
 
-### Selection — AND, not OR
+### Selection - AND, not OR
 
 ```hcl
 selection_required_tags         = { ToBackup = "true" }      # string_equals
@@ -152,7 +152,7 @@ selection_excluded_tag_patterns = { Environment = "sandbox*" } # string_not_like
 ```
 
 All AND-ed. The module deliberately does **not** use `selection_tag`, whose multiple
-blocks are OR-ed — see [ADR-0002](../../docs/adr/0002-condition-not-selection-tag.md).
+blocks are OR-ed - see [ADR-0002](../../docs/adr/0002-condition-not-selection-tag.md).
 An empty `selection_required_tags` is rejected.
 
 `selection_required_tag_patterns` defaults to `{ Owner = "*@*" }` rather than empty: the
@@ -176,7 +176,7 @@ or destination, and every one has a test proving it fires.
 | `copy_retention` for a destination not in `copy_to` | Silently ignored otherwise |
 | An empty `selection_required_tags` | `resources = ["*"]` with no condition backs up the whole account |
 | An external destination with no declared lock window | Its retention cannot be checked; failing open silently on the cross-account hop defeats the guardrail. Waivable with `acknowledge_unchecked_copy_destinations`, and reported either way |
-| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied. **Not** waivable — it is a different failure from the one above, and sharing an escape hatch meant an unlocked sandbox Region silently switched this off |
+| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied. **Not** waivable - it is a different failure from the one above, and sharing an escape hatch meant an unlocked sandbox Region silently switched this off |
 | A field that applies only to the other kind of destination | A setting that appears to take effect and does not is worse than one that is refused |
 | `disable_cold_storage` together with `cold_storage_after` | Contradictory |
 | `vault_force_destroy` with a deny-delete policy that exempts nobody | `destroy` would fail with AccessDenied and nothing would say which setting caused it |
@@ -199,10 +199,10 @@ primary_vault = {
 confirm_irreversible_compliance_lock = true
 ```
 
-Do this only after a full backup → copy → **restore** cycle has been proven in
+Do this only after a full backup -> copy -> **restore** cycle has been proven in
 governance mode. Once the grace period elapses: retention cannot be shortened, recovery
 points cannot be deleted early, `terraform destroy` fails while the vault holds
-recovery points, and no principal — including the account root and AWS Support — can
+recovery points, and no principal - including the account root and AWS Support - can
 undo it. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
 
 ---
@@ -211,15 +211,15 @@ undo it. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
 
 | Variable | Default | Why |
 | --- | --- | --- |
-| `opt_in_resource_types` | `null` | `aws_backup_region_settings` is an account-and-Region singleton. Two states managing it will revert each other on every apply. Own it once in the account baseline. **But note**: `resources = ["*"]` only covers types that are opted in — an un-opted type is skipped silently |
+| `opt_in_resource_types` | `null` | `aws_backup_region_settings` is an account-and-Region singleton. Two states managing it will revert each other on every apply. Own it once in the account baseline. **But note**: `resources = ["*"]` only covers types that are opted in - an un-opted type is skipped silently |
 | `enable_cross_account_backup_global_setting` | `false` | `aws_backup_global_settings` is an organisation singleton and is only valid from the Organizations management account. Cross-account copy does not work until it is on |
 
 ---
 
 ## Operational notes
 
-- **Notifications** are per Region — a vault cannot publish to a topic in another
-  Region — so the module creates one SNS topic per Region it places a vault in.
+- **Notifications** are per Region - a vault cannot publish to a topic in another
+  Region - so the module creates one SNS topic per Region it places a vault in.
   `notification_subscriptions` subscribes to the primary-Region topic.
 - **The staleness alarm uses `treat_missing_data = "breaching"`.** A plan that stops
   running emits no failure metric at all, so absence of data *is* the failure. This is
@@ -247,7 +247,7 @@ as a required CI check. Shared mocks live in `tests/mocks/aws.tfmock.hcl`.
 | `tests/defaults.tftest.hcl` | Shipped behaviour: tiers, copy topology, AND-semantics selection, one key per vault, restore-testing scope, alarm semantics |
 | `tests/guardrails.tftest.hcl` | Every configuration the module refuses, plus the accept case for the lock window |
 | `tests/scaling.tftest.hcl` | Five destinations across five Regions and one cross-account target |
-| `tests/policies.tftest.hcl` | The rendered trust, copy/encrypt, SNS key and topic policies — the full cross-account permission path |
+| `tests/policies.tftest.hcl` | The rendered trust, copy/encrypt, SNS key and topic policies - the full cross-account permission path |
 | `tests/audit.tftest.hcl` | Framework controls, and that its parameters follow the configuration rather than constants |
 | `modules/backup-vault/tests/lock.tftest.hcl` | Lock modes and the compliance acknowledgement guard |
 | `modules/backup-vault/tests/policies.tftest.hcl` | The rendered vault and KMS key policies, including the scoping of the cross-account grant |
@@ -261,7 +261,7 @@ policies decide whether a copy job succeeds or fails with `AccessDenied` at 02:0
 
 ## Submodule
 
-[`modules/backup-vault`](modules/backup-vault) — one vault, its CMK and key policy, its
+[`modules/backup-vault`](modules/backup-vault) - one vault, its CMK and key policy, its
 Vault Lock, its deny-delete access policy and its notifications. Used by this module for
 the primary and managed destinations, and deployed **standalone in the backup account**
 to create the cross-account destination:
@@ -284,11 +284,11 @@ required:
 
 | # | Grant | Where |
 | --- | --- | --- |
-| 1 | source role → `backup:CopyIntoBackupVault` on the destination vault | `backup-policy` |
-| 2 | source role → KMS data plane on the destination **key** | `backup-policy` |
-| 3 | destination vault policy → the source account | `backup-vault` |
-| 4 | destination key policy → the source account | `backup-vault` |
+| 1 | source role -> `backup:CopyIntoBackupVault` on the destination vault | `backup-policy` |
+| 2 | source role -> KMS data plane on the destination **key** | `backup-policy` |
+| 3 | destination vault policy -> the source account | `backup-vault` |
+| 4 | destination key policy -> the source account | `backup-vault` |
 
-Grant 2 is the one that gets missed, because grant 4 looks sufficient — but a key
+Grant 2 is the one that gets missed, because grant 4 looks sufficient - but a key
 policy naming `<account>:root` only *delegates* to that account's IAM; it authorises
 nothing on its own. That is why `kms_key_arn_external` is required rather than optional.

@@ -1,4 +1,4 @@
-# Scenario 1 — Key rotation on AWS
+# Scenario 1 - Key rotation on AWS
 
 > A regulator now requires rotation of all KMS keys. Around thirty keys live in a
 > dedicated Security account, one per environment/service pair, addressed through
@@ -15,7 +15,7 @@ plan that cannot be executed.
 ## The constraint that decides everything
 
 The keys have `Origin = EXTERNAL`. AWS KMS does not support automatic rotation for
-imported key material — there is no flag to enable. Rotation of a BYOK key means:
+imported key material - there is no flag to enable. Rotation of a BYOK key means:
 generate new material on the HSM, wrap it, import it, then call `RotateKeyOnDemand`.
 Every cycle, for every key.
 
@@ -25,16 +25,16 @@ thirty keys.
 
 ---
 
-## Q1 — Main challenges and impacts
+## Q1 - Main challenges and impacts
 
-### 1. The on-demand rotation quota is a hard ceiling — and it sets the policy
+### 1. The on-demand rotation quota is a hard ceiling - and it sets the policy
 
 A KMS key supports **25 on-demand rotations**, lifetime. Not per year. The quota
 cannot be raised.
 
 | Rotation period the regulator settles on | Rotations in 25 years | Key lifetime before the quota is exhausted |
 | --- | --- | --- |
-| Annual | 25 | 25 years — comfortable |
+| Annual | 25 | 25 years - comfortable |
 | Semi-annual | 50 | ~12 years |
 | Quarterly | 100 | **~6 years** |
 | Monthly | 300 | ~2 years |
@@ -44,8 +44,8 @@ period and then implement it. Here the rotation period decides whether the exist
 key estate survives the policy at all, so it has to be settled **before** any
 implementation work starts.
 
-If the answer is quarterly or shorter, the escape route — create a new key, retarget
-the alias, retain the old key for decryption of old data — has to be designed in from
+If the answer is quarterly or shorter, the escape route - create a new key, retarget
+the alias, retain the old key for decryption of old data - has to be designed in from
 the beginning, because it changes the automation, the key policies and the cost model.
 Discovering it in year six is a migration project under regulatory pressure.
 
@@ -66,14 +66,14 @@ error-prone manual work with an HSM operator standing by, or it is automated.
 **Impact:** automation is not an optimisation here, it is what makes the ceremony
 feasible at all.
 
-### 3. Custody of old material is permanent — and losing it is unrecoverable
+### 3. Custody of old material is permanent - and losing it is unrecoverable
 
 Old key material remains the only thing able to decrypt data encrypted under it.
 Rotation does not change that; it adds new material for new encryption and keeps the
 old versions for decryption.
 
 If a material version is lost, or is allowed to expire, the KMS key becomes unusable
-for that data — permanently. There is no AWS-side recovery, because AWS never held
+for that data - permanently. There is no AWS-side recovery, because AWS never held
 the material in the clear.
 
 The observable failure is not subtle:
@@ -96,7 +96,7 @@ Two mitigations, both mandatory:
 **Impact:** this is the highest-severity risk in the scenario. Every other problem
 here is expensive; this one is unrecoverable.
 
-### 4. Rotation is not re-encryption — and this is probably the real question
+### 4. Rotation is not re-encryption - and this is probably the real question
 
 This is the point most likely to be misunderstood between the regulator and the
 platform team, and it is worth settling in writing before anyone commits to a date.
@@ -116,7 +116,7 @@ and its own risk. Committing to a rotation plan without clarifying which one is 
 asked for is how a compliance deadline turns into an outage.
 
 **Impact:** the largest open question in the scenario, and a cost difference of
-roughly 10×.
+roughly 10x.
 
 ### 5. The good news: applications and Terraform see nothing
 
@@ -125,13 +125,13 @@ Consumers reference `alias/prod-s3`; that alias points at the same key before an
 after. There is no application change, no config change and no Terraform diff.
 
 The existing discipline of putting aliases in front of every key is what makes this
-true, and it is worth saying so explicitly — it is the reason this scenario is an
+true, and it is worth saying so explicitly - it is the reason this scenario is an
 operations problem rather than a fleet-wide migration.
 
 ### Other impacts worth listing
 
 - **Cross-account consumers.** The keys are consumed cross-account. Key policies and
-  grants survive rotation untouched, so no consumer-side change is needed — but this
+  grants survive rotation untouched, so no consumer-side change is needed - but this
   should be verified in dev rather than assumed, because a broken grant is discovered
   by an outage.
 - **Cost.** Each additional material version is billed as a key version. Thirty keys
@@ -142,11 +142,11 @@ operations problem rather than a fleet-wide migration.
 
 ---
 
-## Q2 — Steps to apply rotation
+## Q2 - Steps to apply rotation
 
 Two phases: a one-off design decision, then a repeatable per-key ceremony.
 
-### Phase 0 — before any key is touched
+### Phase 0 - before any key is touched
 
 1. Confirm with the regulator whether **rotation** or **re-encryption** is required
    (Q1.4). Get it in writing.
@@ -155,10 +155,10 @@ Two phases: a one-off design decision, then a repeatable per-key ceremony.
 3. Confirm the HSM escrow procedure works by **restoring** a test material version,
    not by asserting that backups exist.
 4. Build the inventory: every key, its aliases, its consumers, its grants, its
-   current material version. Roughly thirty keys — small enough to enumerate exactly,
+   current material version. Roughly thirty keys - small enough to enumerate exactly,
    and there is no excuse for not doing so.
 
-### Phase 1 — the per-key ceremony
+### Phase 1 - the per-key ceremony
 
 ```
   HSM (on-premise)                    AWS KMS (Security account)
@@ -195,27 +195,27 @@ Two phases: a one-off design decision, then a repeatable per-key ceremony.
 
 The property that makes this safe is **step 4**. `ImportKeyMaterial` with
 `NEW_KEY_MATERIAL` stages the material without making it current. Nothing observable
-changes until step 6. So the expensive, hard-to-repeat part of the ceremony — the HSM
-work — is completed and verified before the only irreversible step is taken, and can
+changes until step 6. So the expensive, hard-to-repeat part of the ceremony - the HSM
+work - is completed and verified before the only irreversible step is taken, and can
 be abandoned at no cost if verification fails.
 
-### Phase 2 — rollout order
+### Phase 2 - rollout order
 
-`dev → int → prod`, with a soak period between environments. Per environment, batch
+`dev -> int -> prod`, with a soak period between environments. Per environment, batch
 the keys rather than doing all thirty at once, so that a systemic problem is found on
 key three rather than key twenty-nine.
 
-### Phase 3 — what to automate, and what not to
+### Phase 3 - what to automate, and what not to
 
 | Step | Automated? |
 | --- | --- |
-| Inventory and scheduling | Yes — EventBridge Scheduler |
-| `GetParametersForImport` | Yes — Step Functions |
+| Inventory and scheduling | Yes - EventBridge Scheduler |
+| `GetParametersForImport` | Yes - Step Functions |
 | HSM generation and wrap | **No.** Dual-control human ceremony on the HSM |
-| `ImportKeyMaterial` | Yes — Step Functions |
-| Verification | Yes — encrypt/decrypt probe plus consumer health checks |
+| `ImportKeyMaterial` | Yes - Step Functions |
+| Verification | Yes - encrypt/decrypt probe plus consumer health checks |
 | `RotateKeyOnDemand` | Yes, gated on verification passing |
-| Evidence capture | Yes — CloudTrail to the audit account |
+| Evidence capture | Yes - CloudTrail to the audit account |
 
 A Step Functions state machine per key, orchestrated by EventBridge, with a manual
 approval task (`waitForTaskToken`) around the HSM ceremony. The state machine handles
@@ -228,10 +228,10 @@ material for every key in the estate.
 
 ---
 
-## Q3 — Monitoring compliance with an AWS managed service
+## Q3 - Monitoring compliance with an AWS managed service
 
 **The requirement is subtler than it first appears.** The ask is to identify, at any
-time, *resources* — a specific S3 bucket, RDS instance or DynamoDB table — that are
+time, *resources* - a specific S3 bucket, RDS instance or DynamoDB table - that are
 not compliant. Not keys. Resources.
 
 That distinction rules out the obvious answer.
@@ -243,7 +243,7 @@ That distinction rules out the obvious answer.
 1. Its own documentation states it does **not** apply to keys with imported material.
    Every key in this estate has imported material, so the rule is non-functional here.
 2. It evaluates `AWS::KMS::Key` resources. It answers "is this key rotated?", not
-   "is this database protected by a rotated key?" — which is what was asked.
+   "is this database protected by a rotated key?" - which is what was asked.
 
 Reporting green on a rule that structurally cannot evaluate these keys is worse than
 having no rule, because it produces false assurance.
@@ -306,14 +306,14 @@ Supporting services, each doing the job it is actually good at:
 | Security Hub | Findings alongside the rest of the security posture |
 | EventBridge | Routes `NON_COMPLIANT` to SNS or a ticket |
 | CloudTrail | The audit evidence: `ImportKeyMaterial`, `RotateKeyOnDemand` |
-| CloudWatch alarm | Fires when a scheduled rotation did **not** happen — silence is the failure mode, so the alarm must treat missing data as breaching |
+| CloudWatch alarm | Fires when a scheduled rotation did **not** happen - silence is the failure mode, so the alarm must treat missing data as breaching |
 
 That last row is the one usually forgotten. Everything above detects a *bad* rotation;
 only a staleness alarm detects a rotation that never ran.
 
 ---
 
-## Q4 — Securing key material in transit from HSM to KMS
+## Q4 - Securing key material in transit from HSM to KMS
 
 This is the part AWS has already solved, and the correct answer is to use the
 protocol as designed rather than to add anything to it.
@@ -336,7 +336,7 @@ purpose operating system.
 
 | Choice | Value | Why |
 | --- | --- | --- |
-| Wrapping algorithm | `RSAES_OAEP_SHA_256` | OAEP with SHA-256. Avoid `RSAES_PKCS1_V1_5` — padding-oracle history, and it is offered only for legacy compatibility |
+| Wrapping algorithm | `RSAES_OAEP_SHA_256` | OAEP with SHA-256. Avoid `RSAES_PKCS1_V1_5` - padding-oracle history, and it is offered only for legacy compatibility |
 | Wrapping key spec | `RSA_4096` | Largest available; the material is long-lived, so the wrapping strength should outlast it |
 | Where the wrap happens | Inside the HSM, via **PKCS#11** | Not with OpenSSL on an operator's laptop. AWS explicitly labels the CLI/OpenSSL flow "proof of concept only", and it means the material touches a general purpose OS, its page file and its shell history |
 | Expiration model | `KEY_MATERIAL_DOES_NOT_EXPIRE` | An expiry on imported material is a scheduled, unrecoverable outage (Q1.3) |
@@ -364,7 +364,7 @@ Worth calling out as the strongest single control available:
 
 This means that even a fully compromised import role cannot quietly downgrade the
 wrapping algorithm. The control is enforced by KMS rather than by the correctness of
-the automation, which is the right place for it — the automation is the thing most
+the automation, which is the right place for it - the automation is the thing most
 likely to be compromised.
 
 ### What to reject
@@ -382,7 +382,7 @@ likely to be compromised.
 
 | Question | Answer in one line |
 | --- | --- |
-| Q1 Challenges | BYOK means no automatic rotation; the 25-rotation quota constrains the policy itself; the 24h import window forces automation; lost material is unrecoverable; and rotation ≠ re-encryption, which is the real open question |
-| Q2 Steps | Settle scope and period first, then per key: generate in HSM → `GetParametersForImport` → wrap in HSM → import as `NEW_KEY_MATERIAL` (staged, reversible) → verify → `RotateKeyOnDemand`; dev → int → prod; automate everything except the HSM ceremony |
-| Q3 Monitoring | The AWS managed rule does not cover imported material and evaluates keys rather than resources. Build a custom Config rule that walks resource → key → rotation history, ship it as a conformance pack, aggregate in Security, route through Security Hub |
+| Q1 Challenges | BYOK means no automatic rotation; the 25-rotation quota constrains the policy itself; the 24h import window forces automation; lost material is unrecoverable; and rotation != re-encryption, which is the real open question |
+| Q2 Steps | Settle scope and period first, then per key: generate in HSM -> `GetParametersForImport` -> wrap in HSM -> import as `NEW_KEY_MATERIAL` (staged, reversible) -> verify -> `RotateKeyOnDemand`; dev -> int -> prod; automate everything except the HSM ceremony |
+| Q3 Monitoring | The AWS managed rule does not cover imported material and evaluates keys rather than resources. Build a custom Config rule that walks resource -> key -> rotation history, ship it as a conformance pack, aggregate in Security, route through Security Hub |
 | Q4 Transport | Use the KMS import protocol as designed: RSA-4096 + `RSAES_OAEP_SHA_256`, wrap inside the HSM via PKCS#11, `KEY_MATERIAL_DOES_NOT_EXPIRE`, PrivateLink, and pin the algorithm in the key policy so it cannot be downgraded |

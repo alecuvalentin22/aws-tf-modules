@@ -1,7 +1,7 @@
-# ADR-0004 — A leaf vault module, the provider `region` argument, and two states
+# ADR-0004 - A leaf vault module, the provider `region` argument, and two states
 
 **Status:** Accepted
-**Context:** Scenario 4 — deploying at scale
+**Context:** Scenario 4 - deploying at scale
 
 ## Context
 
@@ -12,7 +12,7 @@ three.
 The blocking constraint: **Terraform cannot iterate over provider configurations.**
 `for_each` cannot vary a provider alias. The conventional consequence is a module
 hard-wired to a fixed set of locations, with the KMS key, the Vault Lock, the vault
-policy and the notification wiring written out once per location — three near-identical
+policy and the notification wiring written out once per location - three near-identical
 blocks that drift apart over time. Adding a Region means editing the module.
 
 ## Decision
@@ -51,7 +51,7 @@ This requires provider `>= 6.0.0`, which is a deliberate floor rather than an ac
 
 A KMS key policy written three times will eventually differ in three ways. Written once
 and instantiated three times, it cannot. The same applies to the lock, the deny-delete
-policy and the notification wiring — all of which are security configuration.
+policy and the notification wiring - all of which are security configuration.
 
 ### The account boundary is respected, not papered over
 
@@ -61,7 +61,7 @@ cross-account destination is an **external** destination: deploy `backup-vault` 
 backup account with `source_account_ids = [<prod>]`, and pass its ARN in.
 
 **In production these should be two states.** A single Terraform state that can write to
-both accounts is a single credential that can destroy both copies — precisely the
+both accounts is a single credential that can destroy both copies - precisely the
 failure the isolated backup account exists to survive. Making the boundary a module
 boundary makes the two-state split the natural way to deploy it, rather than a
 refactoring exercise later.

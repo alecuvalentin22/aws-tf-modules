@@ -1,0 +1,127 @@
+###############################################################################
+# The public front door, for APIs that must serve both audiences.
+#
+# Four things reliably go wrong in front of API Gateway, and all four are
+# handled here rather than left to the caller:
+#
+#   1. Forwarding the viewer Host header to an execute-api origin returns 403 on
+#      every request, because API Gateway routes on Host and the viewer's value
+#      does not match. The AllViewerExceptHostHeader managed policy is the fix,
+#      and this is the single most common cause of "CloudFront in front of API
+#      Gateway returns 403".
+#   2. Behavior ordering is security configuration. Enforced in main.tf.
+#   3. Caching must be disabled explicitly. API responses here are per-caller,
+#      and the failure mode of getting it wrong is one customer receiving
+#      another's response.
+#   4. A path prefix is not an authorization boundary. Documented on the
+#      path_routes variable; nothing here can enforce it.
+###############################################################################
+
+locals {
+  # Managed policy IDs. Referenced by their AWS-published values rather than by a
+  # data source so the intent is legible in review and cannot silently resolve to
+  # something else.
+  #
+  # CachingDisabled: API responses are per-caller and must never be shared.
+  cache_policy_caching_disabled = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+
+  # AllViewerExceptHostHeader: forwards everything the viewer sent EXCEPT Host.
+  origin_request_policy_all_viewer_except_host = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+}
+
+# Guarded on the ARN being present as well as on the exposure mode. Reading the
+# data source with a null secret_id fails first, with Terraform's generic
+# "Missing required argument" pointing at this line, instead of the precondition
+# in main.tf explaining why the secret is required at all.
+data "aws_secretsmanager_secret_version" "origin" {
+  count = local.create_distribution ? 1 : 0
+
+  secret_id = var.origin_secret_arn
+}
+
+# CloudFront is global and a distribution can be managed from any Region, so
+# this module needs no us-east-1 provider alias. What DOES have to be in
+# us-east-1 is the ACM certificate and, if used, the CLOUDFRONT-scope WebACL --
+# both of which are inputs here rather than resources, so that constraint
+# belongs to the caller.
+resource "aws_cloudfront_distribution" "this" {
+  count = local.create_distribution ? 1 : 0
+
+  enabled         = true
+  comment         = "${var.name} public front door"
+  aliases         = [var.hostname]
+  is_ipv6_enabled = true
+  web_acl_id      = var.web_acl_arn
+  tags            = local.tags
+
+  viewer_certificate {
+    acm_certificate_arn      = var.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  # One origin per distinct upstream, keyed by domain so several routes can share
+  # one without declaring it twice.
+  dynamic "origin" {
+    for_each = toset(concat(
+      [var.cloudfront_origin_domain],
+      [for r in var.path_routes : r.origin_domain if r.origin_domain != null],
+    ))
+
+    content {
+      origin_id   = origin.value
+      domain_name = origin.value
+
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
+
+      # Proves to the origin that the request arrived through this distribution.
+      # The regional WAF denies by default and allows only requests carrying it.
+      #
+      # This holds for exactly as long as the secret does, which is why it is a
+      # transitional control rather than the answer. The answer is that a private
+      # API has no public endpoint to bypass to.
+      custom_header {
+        name  = var.origin_secret_header_name
+        value = data.aws_secretsmanager_secret_version.origin[0].secret_string
+      }
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = var.cloudfront_origin_domain
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods         = ["GET", "HEAD"]
+
+    cache_policy_id          = local.cache_policy_caching_disabled
+    origin_request_policy_id = local.origin_request_policy_all_viewer_except_host
+  }
+
+  # Order is preserved from var.path_routes, and main.tf refuses an ordering
+  # where a general pattern shadows a later specific one.
+  dynamic "ordered_cache_behavior" {
+    for_each = var.path_routes
+
+    content {
+      path_pattern           = ordered_cache_behavior.value.path_pattern
+      target_origin_id       = coalesce(ordered_cache_behavior.value.origin_domain, var.cloudfront_origin_domain)
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ordered_cache_behavior.value.allowed_methods
+      cached_methods         = ["GET", "HEAD"]
+
+      cache_policy_id          = local.cache_policy_caching_disabled
+      origin_request_policy_id = local.origin_request_policy_all_viewer_except_host
+    }
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+}

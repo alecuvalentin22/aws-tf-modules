@@ -1,7 +1,7 @@
-# ADR-0001 — Vault Lock: compliance mode, reached through governance mode
+# ADR-0001 - Vault Lock: compliance mode, reached through governance mode
 
 **Status:** Accepted
-**Context:** Scenario 4 — WORM protection
+**Context:** Scenario 4 - WORM protection
 
 ## Context
 
@@ -25,7 +25,7 @@ code, and reaching compliance mode requires an explicit acknowledgement variable
 ### Why compliance mode is the only mode that meets the requirement
 
 The threat the isolated backup account exists to defend against is an attacker holding
-administrator credentials — ransomware operators routinely obtain them, and deleting
+administrator credentials - ransomware operators routinely obtain them, and deleting
 backups before encrypting production is standard practice.
 
 Governance mode is removable by anyone with sufficient IAM permissions. Against an
@@ -81,10 +81,10 @@ mistake. In compliance mode it is a locked vault full of unusable recovery point
 - `changeable_for_days` (minimum 3) provides a grace window after apply.
 
 **Rejected alternatives:**
-- *Governance mode everywhere* — does not meet the requirement against a credentialled
+- *Governance mode everywhere* - does not meet the requirement against a credentialled
   attacker.
-- *Compliance on the backup account only* — the attacker deletes the unlocked prod-account
+- *Compliance on the backup account only* - the attacker deletes the unlocked prod-account
   copies; the RTO of restoring everything cross-account is far worse than restoring
   locally.
-- *Compliance by default in code* — one careless `terraform apply` in a sandbox creates a
+- *Compliance by default in code* - one careless `terraform apply` in a sandbox creates a
   vault that cannot be removed and bills for its full retention.

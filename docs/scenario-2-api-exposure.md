@@ -1,17 +1,24 @@
-# Scenario 2 — Public and private APIs
+# Scenario 2 - Public and private APIs
 
 > Every API, internal or public, is exposed through one hostname. Traffic goes
-> CloudFront (+ Shield Advanced + global WAFv2) → regional WAF → one of several
-> API Gateways → Lambda or internal ALB/ECS Fargate backends. A single Lambda
+> CloudFront (+ Shield Advanced + global WAFv2) -> regional WAF -> one of several
+> API Gateways -> Lambda or internal ALB/ECS Fargate backends. A single Lambda
 > authorizer fronts all of them. All APIs are public "by design", including those
 > never used publicly. APIs are built by different teams but exposed through one
 > endpoint.
 
 ---
 
-## Q1 — Weaknesses in the current architecture
+A working module implementing the target architecture below is in
+[`modules/api-private-edge`](../modules/api-private-edge): a private API reached through
+PrivateLink, split-horizon DNS, and an optional CloudFront front door, with the four
+CloudFront traps described in Q3 enforced at plan time.
 
-### 1. The edge can be bypassed entirely — this is the critical one
+---
+
+## Q1 - Weaknesses in the current architecture
+
+### 1. The edge can be bypassed entirely - this is the critical one
 
 The regional API Gateway endpoints remain publicly resolvable. Anything an attacker
 can reach directly with `curl https://{api-id}.execute-api.{region}.amazonaws.com/...`
@@ -37,12 +44,12 @@ into the same Region.
 
 That costs, in order of how much they will actually be noticed:
 
-- **Latency** — tens of milliseconds added to every internal hop, on a path that
+- **Latency** - tens of milliseconds added to every internal hop, on a path that
   could be single-digit.
-- **Money** — CloudFront request and data-transfer charges, NAT gateway egress, and
+- **Money** - CloudFront request and data-transfer charges, NAT gateway egress, and
   WAF request charges paid twice (global and regional) on traffic that never needed
   to leave.
-- **A data-flow story that is hard to defend.** For a credit insurer, "internal
+- **A data-flow story that is hard to defend.** In a regulated business, "internal
   application traffic transits the public internet" is a sentence that costs a lot of
   meeting time with a regulator, regardless of the fact that it is TLS-encrypted.
 
@@ -95,7 +102,7 @@ concentration of risk.
 
 ---
 
-## Q2 — Target architecture: private internal APIs, minimal impact
+## Q2 - Target architecture: private internal APIs, minimal impact
 
 ### The design
 
@@ -129,7 +136,7 @@ Two changes, and the second is what makes the first cheap:
                        resource policy: this VPCE only
                                        │
                                        ▼
-                         Lambda / internal ALB → ECS
+                         Lambda / internal ALB -> ECS
 ```
 
 **The same hostname, resolved differently depending on where you are.** That is the
@@ -144,7 +151,7 @@ whole trick.
 | API team | Endpoint type + resource policy. No application change. |
 
 Each cutover is a DNS change. If anything looks wrong, it is reverted in minutes by
-removing a record — no redeploy, no rollback of application code. That property is
+removing a record - no redeploy, no rollback of application code. That property is
 what makes it realistic to migrate a large number of APIs without a change freeze.
 
 ### APIs that must serve both audiences
@@ -162,12 +169,12 @@ attachment and one deployment.
 
 **The security property this buys is the important part:** once the API is `PRIVATE`,
 the public `execute-api` endpoint does not exist. The bypass in Q1.1 is not blocked by
-a rule that someone could misconfigure — it is structurally impossible. That is a
+a rule that someone could misconfigure - it is structurally impossible. That is a
 categorically stronger guarantee than any mitigation in Q4.
 
 ### The cheaper stepping stone, and its cost
 
-Publishing the same OpenAPI definition twice — once `PRIVATE`, once `REGIONAL` — is
+Publishing the same OpenAPI definition twice - once `PRIVATE`, once `REGIONAL` - is
 less work and lets internal traffic go private immediately. But the regional endpoint
 stays public, so **every bypass mitigation in Q4 remains mandatory**, and the estate
 now has two deployments to keep in sync. Worth it as a transitional step for a
@@ -191,32 +198,32 @@ removes the Lambda from the request path entirely).
 | --- | --- | --- |
 | 0 | **Measure.** Enable API Gateway access logs and count requests arriving at the regional endpoint that did not come via CloudFront. Right now nobody knows the size of the bypass problem. | None |
 | 1 | Quick mitigations (Q4): secret header + regional WAF default-deny | Low |
-| 2 | Internal-only APIs → private + split-horizon DNS | Low; DNS-reversible |
-| 3 | Dual-exposure APIs → private + CloudFront VPC origin | Medium |
+| 2 | Internal-only APIs -> private + split-horizon DNS | Low; DNS-reversible |
+| 3 | Dual-exposure APIs -> private + CloudFront VPC origin | Medium |
 | 4 | Per-team distributions, per-API authorizers | Medium |
 
 Phase 0 first, always. The current architecture cannot answer "how much bypass traffic
-are we receiving?", and that number determines how urgent phases 1–3 are.
+are we receiving?", and that number determines how urgent phases 1-3 are.
 
 ---
 
-## Q3 — Path-based routing to multiple API Gateways in CloudFront
+## Q3 - Path-based routing to multiple API Gateways in CloudFront
 
 Mechanically this is just **origins + ordered cache behaviors**, and the ordering is
 the part that matters.
 
 ```
-CloudFront distribution — api.example.com
+CloudFront distribution - api.example.com
 │
-├── origin: policies-api    → {id1}.execute-api.eu-central-1.amazonaws.com
-├── origin: claims-api      → {id2}.execute-api.eu-central-1.amazonaws.com
-└── origin: partners-api    → {id3}.execute-api.eu-central-1.amazonaws.com
+├── origin: policies-api    -> {id1}.execute-api.eu-central-1.amazonaws.com
+├── origin: claims-api      -> {id2}.execute-api.eu-central-1.amazonaws.com
+└── origin: partners-api    -> {id3}.execute-api.eu-central-1.amazonaws.com
 
-ordered cache behaviors — FIRST MATCH WINS
-  1. /policies/*   → policies-api
-  2. /claims/*     → claims-api
-  3. /partners/*   → partners-api
-  default (*)      → policies-api  (or an explicit 403)
+ordered cache behaviors - FIRST MATCH WINS
+  1. /policies/*   -> policies-api
+  2. /claims/*     -> claims-api
+  3. /partners/*   -> partners-api
+  default (*)      -> policies-api  (or an explicit 403)
 ```
 
 ### The four things that reliably go wrong
@@ -244,26 +251,25 @@ in the API's own resource policy.
 **4. Caching must be disabled explicitly.**
 API responses here are per-caller. Use the managed `CachingDisabled` policy on API
 behaviors. The failure mode of getting this wrong is one customer receiving another
-customer's response — the worst possible outcome for a credit insurer, and one that
-would surface as a data breach rather than a bug.
+customer's response, which surfaces as a data breach rather than as a bug.
 
 ### Also
 
 - Per-behavior WAF is not possible: **the WebACL is per-distribution.** Per-API rules
   need either scope-down statements inside the shared WebACL, or separate
-  distributions — which is another argument for the per-team split in Q2.
+  distributions - which is another argument for the per-team split in Q2.
 - Origin timeouts default to 30s; long-running APIs need this raised deliberately.
 - `/*` as the default behavior should point somewhere safe, or return 403. Defaulting
   to a real API means a typo'd path reaches a real backend.
 
 ---
 
-## Q4 — Preventing bypass of CloudFront/WAF to regional endpoints
+## Q4 - Preventing bypass of CloudFront/WAF to regional endpoints
 
 Ranked by how much they actually protect, which is not the order they are usually
 presented in.
 
-### Tier 1 — Remove the public endpoint (the only real fix)
+### Tier 1 - Remove the public endpoint (the only real fix)
 
 Make the API `PRIVATE`, as in Q2. The regional `execute-api` endpoint ceases to exist.
 There is no bypass to block because there is no endpoint to reach.
@@ -271,7 +277,7 @@ There is no bypass to block because there is no endpoint to reach.
 Every option below is a mitigation for the case where this is not yet done. They
 should be treated as transitional, with a date attached.
 
-### Tier 2 — Shared secret header + regional WAF default-deny
+### Tier 2 - Shared secret header + regional WAF default-deny
 
 The standard AWS pattern, and the strongest available while the endpoint stays public:
 
@@ -280,8 +286,8 @@ The standard AWS pattern, and the strongest available while the endpoint stays p
    only requests carrying the correct header value.
 
 ```
-   Attacker → regional endpoint directly → no header → WAF blocks
-   CloudFront → regional endpoint → header present → WAF allows
+   Attacker -> regional endpoint directly -> no header -> WAF blocks
+   CloudFront -> regional endpoint -> header present -> WAF allows
 ```
 
 It holds exactly as long as the secret does, so:
@@ -291,11 +297,11 @@ It holds exactly as long as the secret does, so:
 - **Rotate it with the documented overlap procedure**: add the new value to the WAF
   allow-list, update the CloudFront origin header, wait for the distribution to fully
   deploy, then remove the old value. Rotating without the overlap causes a full
-  outage — this is the step that gets skipped.
+  outage - this is the step that gets skipped.
 - Alarm on blocked requests at the regional WAF: a sustained non-zero rate is either
   an attacker probing or a rotation that half-completed.
 
-### Tier 3 — `aws:SourceIp` resource policy using the CloudFront prefix list
+### Tier 3 - `aws:SourceIp` resource policy using the CloudFront prefix list
 
 An API Gateway resource policy restricting source IPs to
 `com.amazonaws.global.cloudfront.origin-facing`.
@@ -303,9 +309,9 @@ An API Gateway resource policy restricting source IPs to
 It is weaker than it looks, and the reason should be stated: it proves the request
 came from **a** CloudFront distribution, not from **ours**. An attacker can put their
 own CloudFront distribution in front of your regional endpoint and satisfy it. It is
-worth having as a layer, but only stacked on top of Tier 2 — never on its own.
+worth having as a layer, but only stacked on top of Tier 2 - never on its own.
 
-### Tier 4 — Detection
+### Tier 4 - Detection
 
 Assume a bypass will eventually work and make it visible:
 
@@ -319,10 +325,10 @@ Assume a bypass will eventually work and make it visible:
 
 | Tier | Control | Strength | Effort |
 | --- | --- | --- | --- |
-| 1 | Private API + PrivateLink | **Structural** — no endpoint to bypass | Medium |
+| 1 | Private API + PrivateLink | **Structural** - no endpoint to bypass | Medium |
 | 2 | Secret header + WAF default-deny | Strong while the secret holds | Low |
-| 3 | CloudFront prefix-list resource policy | Weak alone — proves "a" distribution, not ours | Low |
+| 3 | CloudFront prefix-list resource policy | Weak alone - proves "a" distribution, not ours | Low |
 | 4 | Bypass detection and alarming | Detective, not preventive | Low |
 
-The honest recommendation: ship Tiers 2–4 within weeks because they are cheap, and
+The honest recommendation: ship Tiers 2-4 within weeks because they are cheap, and
 treat them as scaffolding with an explicit removal date. Tier 1 is the answer.

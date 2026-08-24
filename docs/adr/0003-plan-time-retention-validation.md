@@ -1,7 +1,7 @@
-# ADR-0003 — Validate retention against Vault Lock windows at plan time
+# ADR-0003 - Validate retention against Vault Lock windows at plan time
 
 **Status:** Accepted
-**Context:** Scenario 4 — the gap between apply-time and run-time failure
+**Context:** Scenario 4 - the gap between apply-time and run-time failure
 
 ## Context
 
@@ -56,13 +56,13 @@ the least visibility and the strictest lock, with no signal anywhere. Failing op
 sometimes the right default; failing open *silently*, on a guardrail whose entire value
 is catching this class of error, is not.
 
-Guessing a window instead would be worse still — it would either block valid
+Guessing a window instead would be worse still - it would either block valid
 configurations or give false assurance.
 
 **A lock deliberately turned off is not the same thing.** `lock.enabled = false` on a
 vault this module can see is a stated intent, not an unknown, so it does not require an
 acknowledgement. It is still reported in `unvalidated_retention_targets`, and that
-reporting covers the primary vault as well as the copy destinations — the vault every
+reporting covers the primary vault as well as the copy destinations - the vault every
 backup job writes to first should not be the one omission nobody sees.
 
 ## Related checks in the same place

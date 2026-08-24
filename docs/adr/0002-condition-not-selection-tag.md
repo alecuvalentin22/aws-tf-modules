@@ -1,7 +1,7 @@
-# ADR-0002 — Resource selection uses `condition`, not `selection_tag`
+# ADR-0002 - Resource selection uses `condition`, not `selection_tag`
 
 **Status:** Accepted
-**Context:** Scenario 4 — resource selection
+**Context:** Scenario 4 - resource selection
 
 ## Context
 
@@ -11,7 +11,7 @@ The requirement: *all supported resources with `ToBackup=true` **and**
 `aws_backup_selection` offers two ways to express tag matching:
 
 ```hcl
-# Option A — selection_tag
+# Option A - selection_tag
 selection_tag {
   type  = "STRINGEQUALS"
   key   = "ToBackup"
@@ -23,7 +23,7 @@ selection_tag {
   value = "owner@example.com"
 }
 
-# Option B — condition
+# Option B - condition
 condition {
   string_equals {
     key   = "aws:ResourceTag/ToBackup"
@@ -58,7 +58,7 @@ Three properties make this the most dangerous kind of bug:
    intended. No job fails, no alarm fires, nothing is missing during a restore. The
    symptom is a larger bill and a control that does not do what the compliance document
    says it does.
-3. **It is discovered during an audit**, not during an incident — which is the worst
+3. **It is discovered during an audit**, not during an incident - which is the worst
    way to find out that a control has not been enforced for a year.
 
 The `Owner` tag requirement is not decoration. It is what makes a backed-up resource
