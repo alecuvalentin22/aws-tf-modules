@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.15.9"
+  CHECKPOINT_DISABLE: "1"
+  # No AWS credentials are configured anywhere in this workflow, on purpose.
+  # Every check below is static or runs against a mocked provider. A pipeline that
+  # needs credentials to tell you your Terraform is wrong is a pipeline that will be
+  # switched off the first time the credentials expire.
+
+jobs:
+  fmt:
+    name: terraform fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform fmt -check -recursive -diff
+
+  validate:
+    name: terraform validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - modules/backup-policy
+          - modules/backup-policy/modules/backup-vault
+          - modules/backup-policy/examples/minimal
+          - modules/backup-policy/examples/complete
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform init -backend=false -input=false
+        working-directory: ${{ matrix.dir }}
+      - run: terraform validate -no-color
+        working-directory: ${{ matrix.dir }}
+
+  test:
+    name: terraform test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - modules/backup-policy
+          - modules/backup-policy/modules/backup-vault
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform init -input=false
+        working-directory: ${{ matrix.dir }}
+      # Runs against mock_provider: no AWS account, no credentials.
+      - run: terraform test -no-color
+        working-directory: ${{ matrix.dir }}
+
+  lint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: tflint --init
+      - run: tflint --recursive --format compact
+
+  security:
+    name: checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@master
+        with:
+          directory: modules
+          framework: terraform
+          quiet: true
+          soft_fail: false
+
+  confidentiality:
+    name: no client identifiers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # This repository is a portfolio artefact. Client names must never appear in it,
+      # so the check is enforced rather than remembered.
+      - name: grep for client identifiers
+        run: |
+          # The pattern is assembled from fragments so that this step does not
+          # itself contain the names it is looking for -- otherwise the check
+          # fails on its own source and has to be excluded from its own scan.
+          PATTERN="alli""anz|euler[- ]?her""mes"
+          if grep -riEn "$PATTERN" --exclude-dir=.git --exclude-dir=.terraform . ; then
+            echo "::error::client identifier found in the repository"
+            exit 1
+          fi
+          echo "clean"
