@@ -82,6 +82,27 @@ account.
 
 ---
 
+## Verification
+
+| Check | Runs offline | Status |
+| --- | --- | --- |
+| `terraform fmt` / `validate` | yes | clean |
+| `terraform test` (83 tests, mocked provider) | yes | passing |
+| Lambda unit tests (28) | yes | passing |
+| `scripts/lint_policies.py` — rendered policies through an IAM linter | yes | 8/8 clean |
+| Client-identifier grep | yes | clean |
+| tflint, checkov | needs network rulesets | advisory; never executed here |
+
+`scripts/lint_policies.py` renders every policy from a real `terraform plan` and checks it
+against AWS's action and condition-key catalogue. It self-tests against three deliberately
+broken fixtures first and fails if any comes back clean — a linter reporting "clean" is
+worth nothing unless you know it can report something else.
+
+What none of this covers is whether AWS's authorisation engine evaluates the policies as
+intended. That needs a real account, and the specific open questions are listed in
+[`docs/review.md`](docs/review.md) rather than assumed away. Local AWS emulators were
+considered and rejected for it — reasoning in the same document.
+
 ## Operations
 
 [`runbooks/backup-restore.md`](runbooks/backup-restore.md) — restoring from the backup

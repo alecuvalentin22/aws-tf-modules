@@ -1,0 +1,12 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TypoedActionNames",
+      "Effect": "Allow",
+      "Principal": { "Service": "backup.amazonaws.com" },
+      "Action": ["kms:Decrpyt", "kms:GenerateDataKye"],
+      "Resource": "*"
+    }
+  ]
+}

@@ -240,12 +240,80 @@ Open, and only settleable against a live account:
 | Whether AWS Backup populates `aws:SourceAccount` on `AssumeRole` | `StringEqualsIfExists` / `ArnLikeIfExists`, correct either way |
 | Whether the account root is exempt from an explicit `Deny` in a Backup vault access policy | The lockout was fixed regardless; the Terraform-lifecycle half never depended on the answer |
 | Whether the Audit Manager control names and their parameter requirements are accepted by the API | None available offline. First apply will say |
+| Whether AWS Backup's own copy/lifecycle operations are affected by the deny-delete vault policy | None available offline; the policy denies only recovery-point and vault deletion, not copy or expiry |
 | Whether `ControlScope` accepts a tag scope on every control it is applied to | Scope is applied only to the `BACKUP_RESOURCES_PROTECTED_BY_*` family, which AWS documents as resource-scoped |
 
 Flagging these as uncertain rather than asserting them was more useful than a confident
 guess would have been, in both directions.
 
 ---
+
+## Static verification of the rendered policies
+
+The `jsonencode` conversion bought testability and gave up what
+`aws_iam_policy_document` provides for free: validation of the contents. A typo'd
+action name, a condition operator that does not exist, or a condition key meaningless
+for its action all render as perfectly valid JSON and would fail only at apply time --
+or evaluate to something other than intended, which is worse.
+
+`scripts/lint_policies.py` closes that. It renders the policies from a real
+`terraform plan` and runs them through `parliament`, which knows AWS's action and
+condition-key catalogue. **All 8 rendered policies are clean**, including the trust
+policy, both KMS key policies, the SNS key and topic policies, the vault access policy
+and the backup role's inline copy/encrypt policy.
+
+That result is only worth stating because the check is known to have teeth. Before
+looking at anything real, the script runs three deliberately broken fixtures through the
+same code path and fails if any comes back clean:
+
+| Fixture | Caught as |
+| --- | --- |
+| `kms:Decrpyt` | `UNKNOWN_ACTION` |
+| `StringEqualsIfExistss` | `UNKNOWN_OPERATOR` |
+| `kms:GrantIsForAWSResourceTypo` on `kms:CreateGrant` | `UNKNOWN_CONDITION_FOR_ACTION` |
+
+Those are exactly the failure classes hand-written policies are prone to, and exactly
+the ones this module introduced when it moved off the data source. The middle one would
+have caught a typo in the `StringEqualsIfExists` / `StringLikeIfExists` operators that
+the second review pass spent considerable effort reasoning about.
+
+Two `parliament` findings are suppressed by name and documented: `RESOURCE_STAR` (a KMS
+key policy is attached to the key, so `"Resource": "*"` means "this key") and the
+`MALFORMED` "neither Resource nor NotResource" (which is how every `sts:AssumeRole` trust
+policy is written). Suppressing by name rather than by severity keeps everything else in
+scope.
+
+**What it does not cover.** Three scenarios are needed to render everything, because a
+policy containing a value unknown until apply does not appear in the plan at all. One
+statement stays out of reach: `CopyIntoDestinationVaults`, whose `Resource` list is
+always module-created vault ARNs. Its shape is asserted in `terraform test` instead.
+
+And the limit worth being explicit about: this validates that the policies are
+*well-formed and use real AWS vocabulary*. It says nothing about whether AWS's
+authorisation engine evaluates them the way intended — which is the open question above,
+and not something any static tool can answer.
+
+## Local AWS emulators
+
+Considered and rejected for the open questions, after checking rather than assuming.
+
+[Floci](https://github.com/floci-io/floci) is a local AWS emulator that does list AWS
+Backup. Its own service documentation puts `PutBackupVaultAccessPolicy`,
+`PutBackupVaultNotifications`, copy jobs, restore jobs, report plans and framework
+operations under "Not Yet Supported", and the codebase contains no reference to Vault
+Lock or restore testing at all. That is most of this module: three of its eleven Backup
+resource types would apply, and every feature behind the brief's WORM, copy and restore
+requirements would not. The two fixes most worth exercising against a real API -- the
+deny-delete policy's destroy ordering and the vault-notification/topic-policy race --
+both depend on the two unsupported APIs.
+
+The deeper reason applies to any emulator, and would still apply if the coverage were
+complete: an emulator's answer to "does this policy permit the copy?" is *what the
+emulator implements*, not what AWS does. Questions about whether a condition key is even
+present in a request cannot be settled by a reimplementation choosing its own behaviour.
+A green result there would be false confidence, which is worse than a documented unknown
+— and it is the same error as claiming the provider schema validated the Audit Manager
+control names, which is corrected above.
 
 ## Second pass
 

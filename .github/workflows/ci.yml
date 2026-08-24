@@ -68,6 +68,23 @@ jobs:
       - run: terraform test -no-color
         working-directory: ${{ matrix.dir }}
 
+  policies:
+    name: policy lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install parliament
+      # A gate rather than advisory, unlike the two below: this one has actually
+      # been run, and it self-tests against known-bad fixtures before reporting,
+      # so a green result means the linter was working when it produced it.
+      - run: python scripts/lint_policies.py
+
   # tflint and checkov are ADVISORY, not gates.
   #
   # Both pull rulesets from the network at run time, so neither could be executed
