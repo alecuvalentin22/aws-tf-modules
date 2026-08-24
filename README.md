@@ -50,7 +50,7 @@ arguments are.
 
 ## Three things in the backup module worth a look
 
-**It refuses configurations that AWS accepts and then fails on nightly.**
+It refuses configurations that AWS accepts and then fails on nightly.
 A Vault Lock enforces its retention window *at job time*, not at apply time. A plan whose
 `delete_after` falls outside a destination's window applies cleanly, reports success, and
 then fails every night in production, and on a compliance lock the window cannot be
@@ -59,14 +59,14 @@ widened to fix it. The module checks every `(rule, destination, retention)` trip
 AWS constraints get the same treatment.
 [ADR-0003](docs/adr/0003-plan-time-retention-validation.md)
 
-**Selection uses `condition`, not `selection_tag`.**
+Selection uses `condition`, not `selection_tag`.
 AWS Backup evaluates multiple `selection_tag` blocks with OR, so `ToBackup=true` **AND**
 `Owner=<owner>` written that way accepts resources with no owner at all. It is invisible
 in a plan diff and fails in the direction that breaks nothing: you back up more than
 intended, so no job fails and nobody notices until an audit.
 [ADR-0002](docs/adr/0002-condition-not-selection-tag.md)
 
-**It scales past the three vaults in the brief.**
+It scales past the three vaults in the brief.
 Terraform cannot iterate over provider configurations, which is why modules like this are
 usually hard-wired to a fixed set of locations, with the KMS key, the lock and the vault
 policy copy-pasted per location. Using the AWS provider v6 per-resource `region` argument,
@@ -98,7 +98,7 @@ done
 | `gitlab-observability` | 12 |
 | | **110** |
 
-**No AWS account or credentials are needed.** Every test runs against `mock_provider`,
+No AWS account or credentials are needed. Every test runs against `mock_provider`,
 which is what makes them usable as a required check rather than a nightly job someone
 turns off.
 

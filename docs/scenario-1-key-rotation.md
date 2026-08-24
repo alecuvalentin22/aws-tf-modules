@@ -49,7 +49,7 @@ the alias, retain the old key for decryption of old data, has to be designed in 
 the beginning, because it changes the automation, the key policies and the cost model.
 Discovering it in year six is a migration project under regulatory pressure.
 
-**Impact:** a design question that must be answered by the regulator's requirement,
+Impact: a design question that must be answered by the regulator's requirement,
 not by the platform team.
 
 ### 2. The import window is 24 hours, and nothing can be prepared in advance
@@ -63,7 +63,7 @@ So the HSM ceremony, the wrap and the import all have to complete inside the sam
 day. For one key that is a morning. For thirty keys it is either a full day of
 error-prone manual work with an HSM operator standing by, or it is automated.
 
-**Impact:** automation is not an optimisation here, it is what makes the ceremony
+Impact: automation is not an optimisation here, it is what makes the ceremony
 feasible at all.
 
 ### 3. Custody of old material is permanent - and losing it is unrecoverable
@@ -93,7 +93,7 @@ Two mitigations, both mandatory:
   tested restore procedure. The escrow is the disaster recovery plan for the entire
   encrypted estate, so it deserves the same rigour as the data it protects.
 
-**Impact:** this is the highest-severity risk in the scenario. Every other problem
+Impact: this is the highest-severity risk in the scenario. Every other problem
 here is expensive; this one is unrecoverable.
 
 ### 4. Rotation is not re-encryption - and this is probably the real question
@@ -115,7 +115,7 @@ Re-encryption is a separate programme with its own budget, its own downtime wind
 and its own risk. Committing to a rotation plan without clarifying which one is being
 asked for is how a compliance deadline turns into an outage.
 
-**Impact:** the largest open question in the scenario, and a cost difference of
+Impact: the largest open question in the scenario, and a cost difference of
 roughly 10x.
 
 ### 5. The good news: applications and Terraform see nothing
@@ -380,9 +380,29 @@ likely to be compromised.
 
 ## Summary
 
-| Question | Answer in one line |
-| --- | --- |
-| Q1 Challenges | BYOK means no automatic rotation; the 25-rotation quota constrains the policy itself; the 24h import window forces automation; lost material is unrecoverable; and rotation != re-encryption, which is the real open question |
-| Q2 Steps | Settle scope and period first, then per key: generate in HSM -> `GetParametersForImport` -> wrap in HSM -> import as `NEW_KEY_MATERIAL` (staged, reversible) -> verify -> `RotateKeyOnDemand`; dev -> int -> prod; automate everything except the HSM ceremony |
-| Q3 Monitoring | The AWS managed rule does not cover imported material and evaluates keys rather than resources. Build a custom Config rule that walks resource -> key -> rotation history, ship it as a conformance pack, aggregate in Security, route through Security Hub |
-| Q4 Transport | Use the KMS import protocol as designed: RSA-4096 + `RSAES_OAEP_SHA_256`, wrap inside the HSM via PKCS#11, `KEY_MATERIAL_DOES_NOT_EXPIRE`, PrivateLink, and pin the algorithm in the key policy so it cannot be downgraded |
+The constraint that decides everything is that these keys are BYOK, so AWS will not
+rotate them and no flag exists to make it. Rotation becomes a recurring HSM ceremony, and
+three things follow from that: the 25-rotation lifetime quota means the rotation period
+the regulator picks decides whether the current keys survive the policy at all; the
+24-hour import window makes automation mandatory at thirty keys rather than merely
+desirable; and losing a material version is unrecoverable, which makes escrow and
+`KEY_MATERIAL_DOES_NOT_EXPIRE` non-negotiable. Settle whether "rotate" means rotation or
+re-encryption before anything else, because the two differ by roughly an order of
+magnitude in cost.
+
+Per key the sequence is: generate inside the HSM, `GetParametersForImport`, wrap inside
+the HSM, import as `NEW_KEY_MATERIAL`, verify, then `RotateKeyOnDemand`. The import stages
+the material without changing anything, so the expensive part is done and checked before
+the only irreversible step. Roll through dev, int and prod, and automate all of it except
+the ceremony itself.
+
+For monitoring, the AWS managed rule is no help: it does not apply to imported material
+and it evaluates keys rather than resources. A custom Config rule that walks from a
+resource to its key to that key's rotation history answers the question that was actually
+asked. Ship it as a conformance pack, aggregate in the Security account, route findings
+through Security Hub, and alarm on rotations that did not happen.
+
+Transport is the part AWS has already solved. Use the import protocol as designed:
+RSA-4096 with `RSAES_OAEP_SHA_256`, wrapping done inside the HSM over PKCS#11 rather than
+with OpenSSL on a laptop, over PrivateLink, with the algorithm pinned in the key policy so
+a compromised import role cannot downgrade it.

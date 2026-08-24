@@ -78,7 +78,7 @@ aws backup get-recovery-point-restore-metadata \
 Then edit only what must change, typically the target identifier, so the restore
 does not collide with the resource you are recovering from.
 
-**Restore to a new resource, never over the original.** Keeping the damaged
+Restore to a new resource, never over the original. Keeping the damaged
 resource intact preserves the evidence, and gives you something to fall back to if
 the restore turns out worse than what you have.
 
@@ -142,20 +142,20 @@ whether or not it met target.
 
 ## Things that will bite you
 
-**A compliance-mode Vault Lock refuses deletion.** If you are trying to clean up
+A compliance-mode Vault Lock refuses deletion. If you are trying to clean up
 after a test restore and the recovery points will not delete, that is the lock
 working as designed. Wait out the retention. `terraform destroy` will also fail
 against such a vault while it holds recovery points.
 
-**Cold storage restores are slow.** The monthly tier transitions after 90 days.
+Cold storage restores are slow. The monthly tier transitions after 90 days.
 Anything older restores in hours. Start it before you finish triage.
 
-**A restore is a privileged operation** - it creates resources. The module's role
+A restore is a privileged operation - it creates resources. The module's role
 carries the AWS restore policies, but a separate restore role
 (`restore_testing_iam_role_arn`) is worth having so that routine backup permissions
 do not include the ability to materialise a copy of production anywhere.
 
-**Continuous (PITR) recovery points restore to a point in time**, not to a snapshot.
+Continuous (PITR) recovery points restore to a point in time, not to a snapshot.
 The metadata shape differs, and the restorable window is at most 35 days.
 
 ---

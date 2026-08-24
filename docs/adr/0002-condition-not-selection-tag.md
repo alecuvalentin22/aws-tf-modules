@@ -1,6 +1,6 @@
 # ADR-0002 - Resource selection uses `condition`, not `selection_tag`
 
-**Status:** Accepted
+Status: Accepted
 **Context:** Scenario 4 - resource selection
 
 ## Context
@@ -40,7 +40,7 @@ They are not equivalent.
 
 ## Decision
 
-**Use `condition`.**
+Use `condition`.
 
 ## Rationale
 

@@ -37,34 +37,34 @@ module takes an S3 location rather than packaging them.
 
 ## What it watches, in order of what actually catches breakage
 
-**1. Synthetic canaries.** Instance metrics tell you the box is alive. They do not
+1. Synthetic canaries. Instance metrics tell you the box is alive. They do not
 tell you a developer can push. A `git clone` canary is the only check that exercises
 Gitaly, repository storage, authentication and the network path in one go, which is
 the real user journey. Run it over **both** HTTPS and SSH: they are separate failure
 domains, and an SSH-only outage is invisible to every HTTPS check.
 
-**2. Sidekiq queue latency.** The earliest predictive signal GitLab offers. It
+2. Sidekiq queue latency. The earliest predictive signal GitLab offers. It
 typically starts climbing 10 to 30 minutes before users notice anything, which makes
 it the one metric here worth paging on ahead of impact rather than after it.
 
-**3. Repository disk.** Disk-full is the most common cause of a self-managed GitLab
+3. Repository disk. Disk-full is the most common cause of a self-managed GitLab
 outage, and it is entirely preventable given warning. Three thresholds (70 ticket,
 80 warn, 90 page), because the useful property of a disk alarm is lead time, not
 detection.
 
-**4. Host status and backup freshness.** The freshness alarm watches the age of the
+4. Host status and backup freshness. The freshness alarm watches the age of the
 backup object rather than the exit code of the job, so a run that "succeeds" while
 writing nothing is still caught.
 
 ## Two things it refuses
 
-**`/-/health` as a load balancer health check.** GitLab's documentation warns against
+`/-/health` as a load balancer health check. GitLab's documentation warns against
 this explicitly: the endpoint fails whenever any backend dependency is slow, so a
 transient database slowdown pulls every healthy node out of the pool and turns a
 degradation into an outage. The load balancer becomes an amplifier of small problems.
 Use `/-/readiness`, which is the default.
 
-**Disk and memory alarms without the CloudWatch agent.** EC2 publishes neither metric
+Disk and memory alarms without the CloudWatch agent. EC2 publishes neither metric
 on its own. Creating the alarms anyway produces alarms stuck in `INSUFFICIENT_DATA`
 forever, which on a dashboard is indistinguishable from healthy. Set
 `cloudwatch_agent_installed = true` once the agent is actually running.

@@ -167,7 +167,7 @@ CloudFront VPC origins (or a VPC Lattice / ALB path) let CloudFront reach into t
 VPC without the API being public. There is exactly one API definition, one authorizer
 attachment and one deployment.
 
-**The security property this buys is the important part:** once the API is `PRIVATE`,
+The security property this buys is the important part: once the API is `PRIVATE`,
 the public `execute-api` endpoint does not exist. The bypass in Q1.1 is not blocked by
 a rule that someone could misconfigure. It is structurally impossible. That is a
 categorically stronger guarantee than any mitigation in Q4.
@@ -228,27 +228,27 @@ ordered cache behaviors - FIRST MATCH WINS
 
 ### The four things that reliably go wrong
 
-**1. Forwarding the viewer `Host` header breaks `execute-api` immediately.**
+1. Forwarding the viewer `Host` header breaks `execute-api` immediately.
 API Gateway routes on the `Host` header. Forward `api.example.com` to an
 `execute-api` origin and it returns 403 on every request, because that host does not
 match the API's expected domain. Use the managed origin request policy
 `AllViewerExceptHostHeader`. This is the single most common cause of "CloudFront in
 front of API Gateway returns 403".
 
-**2. Behavior ordering is security configuration, not cosmetics.**
+2. Behavior ordering is security configuration, not cosmetics.
 First match wins. A permissive behavior placed above a restrictive one takes precedence,
 and nothing in the console warns about it. Specific patterns must be listed before
 general ones, and the ordering belongs under change control and code review like any
 other security rule.
 
-**3. A path prefix is not an authorisation boundary.**
+3. A path prefix is not an authorisation boundary.
 CloudFront normalises the URI for **matching** but forwards the **raw** URI to the
 origin. So `/policies/..%2fclaims/x` may match the `/policies/*` behavior while the
 origin sees something else. Path prefixes route traffic; they must never be the thing
 that decides who is allowed to call what. Authorisation belongs at the authorizer and
 in the API's own resource policy.
 
-**4. Caching must be disabled explicitly.**
+4. Caching must be disabled explicitly.
 API responses here are per-caller. Use the managed `CachingDisabled` policy on API
 behaviors. The failure mode of getting this wrong is one customer receiving another
 customer's response, which surfaces as a data breach rather than as a bug.

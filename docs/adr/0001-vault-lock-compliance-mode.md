@@ -1,6 +1,6 @@
 # ADR-0001 - Vault Lock: compliance mode, reached through governance mode
 
-**Status:** Accepted
+Status: Accepted
 **Context:** Scenario 4 - WORM protection
 
 ## Context
@@ -67,20 +67,20 @@ mistake. In compliance mode it is a locked vault full of unusable recovery point
 
 ## Consequences
 
-**Accepted:**
+Accepted:
 - `terraform destroy` will fail against locked, non-empty vaults. This is the feature
   working, and it must be stated in onboarding rather than discovered.
 - Retention becomes a commitment, not a setting.
 - A separate decommissioning procedure is needed: wait out the retention, then destroy.
 
-**Mitigated in the module:**
+Mitigated in the module:
 - The `confirm_irreversible_compliance_lock` guard makes the irreversible step
   deliberate. Its error message states what cannot be undone and names the rollout order.
 - The plan-time retention-window check (ADR-0003) catches the most common way a
   compliance lock becomes a nightly production failure.
 - `changeable_for_days` (minimum 3) provides a grace window after apply.
 
-**Rejected alternatives:**
+Rejected alternatives:
 - *Governance mode everywhere* - does not meet the requirement against a credentialled
   attacker.
 - *Compliance on the backup account only* - the attacker deletes the unlocked prod-account

@@ -26,7 +26,7 @@ cheapest one.
 
 ### Critical
 
-**1. Single instance, single AZ, no ASG, no load balancer, no tier isolation.**
+1. Single instance, single AZ, no ASG, no load balancer, no tier isolation.
 
 - One EC2 failure, one bad `apt` upgrade, one full disk = total outage.
 - Recovery is a human rebuilding a hand-configured server. RTO is however long that
@@ -35,7 +35,7 @@ cheapest one.
   users of the same CPU. A Gitaly OOM during a large clone kills Puma and Redis with
   it. There is no bulkhead anywhere.
 
-**2. The repositories EBS volume is the single most dangerous component.**
+2. The repositories EBS volume is the single most dangerous component.
 
 - EBS is **zonal**. That one volume pins the entire platform to one AZ, no matter what
   is done elsewhere.
@@ -51,7 +51,7 @@ cheapest one.
   this. It is the most under-appreciated risk in the design, and it only reveals
   itself during an actual disaster, which is the worst possible time to discover it.
 
-**3. Backups are unproven and probably incomplete.**
+3. Backups are unproven and probably incomplete.
 
 - No stated RPO or RTO.
 - No cross-region copy - a regional event is unrecoverable.
@@ -157,7 +157,7 @@ Three honest caveats, because this is where these designs usually go wrong:
 
 ### Recommendation
 
-**Option A now, Option B when the platform's criticality justifies 3-4x.** Option A
+Option A now, Option B when the platform's criticality justifies 3-4x. Option A
 removes the AZ single point of failure, makes the RDS Multi-AZ spend meaningful, and
 gets RTO from hours to minutes, which is the bulk of the available risk reduction.
 It is also a strictly smaller step, and it is on the path to Option B rather than a
@@ -228,7 +228,7 @@ metric most worth paging on before impact.
 
 ### 4. The CloudWatch agent is mandatory, not optional
 
-**EC2 publishes neither memory nor disk-usage metrics.** Without the CloudWatch agent
+EC2 publishes neither memory nor disk-usage metrics. Without the CloudWatch agent
 installed and configured, the two most common causes of a GitLab outage are invisible.
 
 **Repository disk usage deserves to be the single most important alarm on the
@@ -295,7 +295,7 @@ on the current version, so the automation has to *compute* the path and then wal
 pausing between hops until migrations drain. That is a state machine with waits,
 retries and conditional branches, a shell script that models it will be wrong.
 
-**AWS Step Functions**, with the gates below. The gates are what make it safe; the
+AWS Step Functions, with the gates below. The gates are what make it safe; the
 automation is just what makes it repeatable.
 
 ```
@@ -377,9 +377,32 @@ status.
 
 ## Summary
 
-| Question | Answer in one line |
-| --- | --- |
-| Q1 Weaknesses | Everything except the DB is on one instance in one AZ, which neutralises the Multi-AZ RDS; the zonal repository volume pins the platform and its snapshot timeline diverges from the RDS timeline, giving split-brain on restore; backups are untested, not copied cross-region, and probably exclude `gitlab-secrets.json` |
-| Q2 Target | "Resilient single node" first - ASG-of-one across 3 AZs, object data on S3, ElastiCache, RDS Proxy: RTO hours -> ~10 min for ~1.6x cost. GitLab 3K reference architecture for full HA at 3-4x, with sharded Gitaly as an intermediate step because Praefect is genuinely complex |
-| Q3 Monitoring | Synthetic `git clone` canaries over HTTPS and SSH are the only checks that prove Git works; use `/-/readiness` not `/-/health` for the load balancer; Sidekiq queue latency is the earliest predictive signal; the CloudWatch agent is mandatory for memory and disk; `treat_missing_data = "breaching"` on everything critical |
-| Q4 Automation | Step Functions that compute and walk the required upgrade path, gated on pending migrations, a verified backup including secrets, a drain, one-node migrations, real post-checks and a defined rollback - rehearsed weekly by restoring production into staging, which doubles as the missing restore test |
+The weakness that reframes the rest is that everything except the database runs on one
+instance in one Availability Zone, which means the Multi-AZ spend on RDS currently buys
+nothing. The repository volume is worse: EBS is zonal, so it pins the platform, and its
+snapshot timeline is independent of the RDS point-in-time timeline, so restoring both
+together produces split-brain that only reveals itself during a real disaster. Backups
+have no stated RPO or RTO, no cross-region copy, no evidence of a tested restore, and
+probably exclude `gitlab-secrets.json`, without which a restored database is undecryptable.
+
+For the target, take the resilient single node first: an ASG of one across three AZs,
+object data on S3, ElastiCache for Redis, RDS Proxy. That brings RTO from hours to about
+ten minutes for roughly 1.6x the cost, and it removes the AZ single point of failure that
+makes the current RDS spend pointless. GitLab's 3K reference architecture is the full HA
+answer at 3-4x, with sharded Gitaly as a sensible intermediate step, because Praefect is
+complex enough that GitLab says so in its own documentation.
+
+On monitoring, synthetic `git clone` canaries over both HTTPS and SSH are the only checks
+that prove Git actually works. Use `/-/readiness` for the load balancer and not
+`/-/health`, which fails on slow dependencies and evicts healthy nodes. Sidekiq queue
+latency is the earliest predictive signal available. The CloudWatch agent is mandatory,
+since EC2 publishes neither memory nor disk. And every critical alarm needs
+`treat_missing_data = "breaching"`, because a dead host stops publishing and the alarm
+would otherwise go green as the platform dies.
+
+The runbook worth automating is the upgrade, as a state machine that computes and walks
+the required version path rather than a script. The gates are what make it safe: a
+pending-migration check, a verified backup including the secrets file, a drain, exactly
+one node running migrations, real post-checks, and a defined rollback. Rehearse it weekly
+by restoring the previous night's production backup into staging, which doubles as the
+restore test nobody currently performs.

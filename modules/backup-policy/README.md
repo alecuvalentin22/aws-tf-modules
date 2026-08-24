@@ -63,7 +63,7 @@ Regions) and [`examples/complete`](examples/complete) (the full two-account topo
         - restore testing plan - Audit Manager framework - optional report plans
 ```
 
-**Managed** destinations set `region`; the module builds the vault, its key and its
+Managed destinations set `region`; the module builds the vault, its key and its
 lock. **External** destinations set `vault_arn`; the module only references them. That
 split exists because a different account needs different credentials, see
 [ADR-0004](../../docs/adr/0004-module-composition-and-account-boundaries.md).
@@ -189,7 +189,7 @@ or destination, and every one has a test proving it fires.
 
 ## Vault Lock
 
-**Governance is the default.** Compliance mode is the target state, but it is
+Governance is the default. Compliance mode is the target state, but it is
 irreversible, so the module requires an explicit acknowledgement:
 
 ```hcl

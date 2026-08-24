@@ -1,6 +1,6 @@
 # ADR-0003 - Validate retention against Vault Lock windows at plan time
 
-**Status:** Accepted
+Status: Accepted
 **Context:** Scenario 4 - the gap between apply-time and run-time failure
 
 ## Context
@@ -35,16 +35,16 @@ the vault lock window [7, 365]
 
 ## Rationale
 
-**Per destination, not one global window.** A single global check misses the case that
+Per destination, not one global window. A single global check misses the case that
 matters most: the local backup is inside the primary vault's window and succeeds, while
 only the cross-account copy is rejected. That version is far harder to spot, because the
 dashboard shows successful backup jobs and the failure is in a copy job to another
 account.
 
-**Fail at plan, not at apply.** A precondition on `aws_backup_plan` surfaces the error
+Fail at plan, not at apply. A precondition on `aws_backup_plan` surfaces the error
 in the plan output, so it is caught in a pull request rather than after a merge.
 
-**External destinations are checked when declared, and refused when not.** The module
+External destinations are checked when declared, and refused when not. The module
 cannot read a Vault Lock in another account, so the caller supplies
 `lock_min_retention_days` / `lock_max_retention_days`. Omitting both is a plan-time
 **error** unless `acknowledge_unchecked_copy_destinations` is set, and the
@@ -59,7 +59,7 @@ is catching this class of error, is not.
 Guessing a window instead would be worse still. It would either block valid
 configurations or give false assurance.
 
-**A lock deliberately turned off is not the same thing.** `lock.enabled = false` on a
+A lock deliberately turned off is not the same thing. `lock.enabled = false` on a
 vault this module can see is a stated intent, not an unknown, so it does not require an
 acknowledgement. It is still reported in `unvalidated_retention_targets`, and that
 reporting covers the primary vault as well as the copy destinations, the vault every

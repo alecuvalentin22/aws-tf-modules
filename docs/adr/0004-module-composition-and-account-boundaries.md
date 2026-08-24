@@ -1,6 +1,6 @@
 # ADR-0004 - A leaf vault module, the provider `region` argument, and two states
 
-**Status:** Accepted
+Status: Accepted
 **Context:** Scenario 4 - deploying at scale
 
 ## Context
@@ -60,7 +60,7 @@ alias. Rather than force the policy module to take an alias it only sometimes ne
 cross-account destination is an **external** destination: deploy `backup-vault` in the
 backup account with `source_account_ids = [<prod>]`, and pass its ARN in.
 
-**In production these should be two states.** A single Terraform state that can write to
+In production these should be two states. A single Terraform state that can write to
 both accounts is a single credential that can destroy both copies, precisely the
 failure the isolated backup account exists to survive. Making the boundary a module
 boundary makes the two-state split the natural way to deploy it, rather than a

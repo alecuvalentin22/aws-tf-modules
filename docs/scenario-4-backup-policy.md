@@ -206,7 +206,7 @@ modules/backup-policy/
 +-- tests/                    26 tests, mocked provider, no AWS account needed
 ```
 
-**Terraform cannot iterate over provider configurations.** That single constraint is
+Terraform cannot iterate over provider configurations. That single constraint is
 why most AWS Backup modules are hard-wired to a fixed set of locations, with a copy of
 the KMS key, the lock and the vault policy per location, three near-identical blocks
 that then drift apart.
@@ -221,7 +221,7 @@ Two things avoid that here:
 2. **The `backup-vault` leaf module.** The key policy, lock, deny-delete policy and
    notification wiring are written once and cannot drift between locations.
 
-**Cross-account still needs an aliased provider**, because a different account needs
+Cross-account still needs an aliased provider, because a different account needs
 different credentials. That boundary is respected rather than papered over: the backup
 account's vault is a separate instantiation of `backup-vault`, and its ARN is passed
 in as an external destination.
