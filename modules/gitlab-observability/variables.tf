@@ -177,6 +177,20 @@ variable "gitlab_metrics_namespace" {
   default     = "GitLab"
 }
 
+variable "gitlab_metric_dimensions" {
+  description = <<-EOT
+    Dimensions GitLab's metrics carry once they reach CloudWatch. Empty uses
+    { InstanceId = var.instance_id }.
+
+    A CloudWatch alarm matches a metric on its exact dimension set, so this has to
+    agree with whatever ships the metrics. Get it wrong and the alarm is not
+    approximately right, it is permanently in INSUFFICIENT_DATA, which reads as
+    healthy on a dashboard.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
 ###############################################################################
 # Backups
 ###############################################################################
@@ -187,20 +201,26 @@ variable "backup_bucket_name" {
   default     = null
 }
 
+variable "backup_object_prefix" {
+  description = "Key prefix the backup job writes under. The request-metrics filter and the freshness alarm are both scoped to it, so an unrelated write elsewhere in the bucket does not read as a successful backup."
+  type        = string
+  default     = "backups/"
+}
+
 variable "backup_max_age_hours" {
   description = <<-EOT
     Hours without a fresh backup object before the freshness alarm fires.
 
-    A failed backup announces nothing. The alarm watches the
-    age of the object rather than the exit code of the job, so a run that "succeeds"
-    while writing nothing is still caught.
+    A failed backup announces nothing. The alarm counts writes under
+    backup_object_prefix rather than reading the exit code of the job, so a run
+    that "succeeds" while writing nothing is still caught.
   EOT
   type        = number
-  default     = 26
+  default     = 24
 
   validation {
-    condition     = var.backup_max_age_hours >= 1 && var.backup_max_age_hours <= 168
-    error_message = "backup_max_age_hours must be between 1 and 168."
+    condition     = var.backup_max_age_hours >= 1 && var.backup_max_age_hours <= 24
+    error_message = "backup_max_age_hours must be between 1 and 24: the alarm period is this value in seconds, and CloudWatch caps an alarm period at 86400."
   }
 }
 

@@ -167,6 +167,24 @@ CloudFront VPC origins (or a VPC Lattice / ALB path) let CloudFront reach into t
 VPC without the API being public. There is exactly one API definition, one authorizer
 attachment and one deployment.
 
+One detail decides whether the internal half of that picture works at all. A
+private hosted zone resolving `api.example.com` to the interface endpoint delivers
+the request, and API Gateway then has no way to tell which private API it is for:
+a private API is addressed by its `execute-api` name or by an `x-apigw-api-id`
+header, and a consumer calling the friendly hostname sends neither. Every call
+returns 403 from a name that resolves perfectly, which is a bad failure to debug
+because DNS, the endpoint and the API all look healthy.
+
+**Private custom domain names** close it. API Gateway matches the SNI name against
+the registered domain, a domain-name access association says which VPC endpoint may
+present that name, and a base path mapping says which API and stage it resolves to.
+The domain name carries its own resource policy, evaluated before the API's, so it
+needs the `aws:SourceVpce` condition as well; without it the domain is reachable
+from any endpoint associated with it, which reopens one layer up the hole the API
+policy closes. Before this existed the only options were exposing `execute-api`
+names to consumers or running a reverse proxy, and both are why teams reached for a
+regional endpoint in the first place.
+
 The security property this buys is the important part: once the API is `PRIVATE`,
 the public `execute-api` endpoint does not exist. The bypass in Q1.1 is not blocked by
 a rule that someone could misconfigure. It is structurally impossible. That is a

@@ -112,6 +112,56 @@ variable "allowed_principal_arns" {
 }
 
 ###############################################################################
+# Private custom domain name
+###############################################################################
+
+variable "create_private_domain_name" {
+  description = <<-EOT
+    Register var.hostname as a PRIVATE custom domain name on this API.
+
+    Without it, a DNS record pointing the hostname at the interface endpoint
+    delivers the request and API Gateway then has no way to tell which private API
+    it is for, so every call returns 403. A private API is otherwise addressed only
+    by its execute-api name or by an x-apigw-api-id header, and a consumer calling
+    the friendly hostname sends neither.
+
+    Set false when the domain name is owned by another stack, and supply
+    private_domain_name_id so the record can still be published here.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "private_domain_name_id" {
+  description = "Existing private custom domain name to route to, when create_private_domain_name is false."
+  type        = string
+  default     = null
+}
+
+variable "private_certificate_arn" {
+  description = <<-EOT
+    REGIONAL ACM certificate for the hostname, in this API's Region. Required when the
+    module creates the private custom domain name.
+
+    Not the same certificate as certificate_arn: CloudFront reads only from us-east-1,
+    API Gateway reads only from its own Region. The same hostname needs both.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "api_stage_name" {
+  description = <<-EOT
+    Stage the private custom domain name maps to. Null leaves it unmapped.
+
+    A name rather than a reference: this module owns how the API is exposed, not what
+    it does, so the methods, the deployment and the stage belong to the caller.
+  EOT
+  type        = string
+  default     = null
+}
+
+###############################################################################
 # Public front door (exposure = "dual")
 ###############################################################################
 
@@ -128,6 +178,23 @@ variable "cloudfront_origin_domain" {
   EOT
   type        = string
   default     = null
+}
+
+variable "cloudfront_vpc_origin_ids" {
+  description = <<-EOT
+    origin domain => CloudFront VPC origin ID, for upstreams that are not reachable
+    from the internet.
+
+    An internal ALB, which is what fronts a private API, does not resolve publicly.
+    CloudFront accepts a distribution pointing at one and then fails to connect on
+    every request, which reads as an origin outage rather than a configuration
+    mistake. A VPC origin is the supported path in.
+
+    The VPC origin itself is created by the caller, because it needs the load
+    balancer's ARN and this module deliberately does not own the load balancer.
+  EOT
+  type        = map(string)
+  default     = {}
 }
 
 variable "path_routes" {
@@ -183,11 +250,17 @@ variable "origin_secret_arn" {
     Secrets Manager secret holding the origin header value. Required when exposure is
     "dual".
 
-    A secret, not a literal, because a literal ends up in the Terraform state and in
-    the distribution config. Rotate it with the documented overlap procedure: add the
-    new value to the WAF allow list, update the origin header, wait for the
-    distribution to finish deploying, then remove the old value. Rotating without the
-    overlap is a full outage, and it is the step that gets skipped.
+    Worth being precise about what this buys, because it is less than it looks.
+    CloudFront takes a custom header only as a literal string, so the module reads the
+    secret and the plaintext lands in the Terraform state either way. The state file is
+    part of the trust boundary for this control; encrypt it and restrict who can read
+    it. What the indirection does buy is that the value never sits in version control,
+    and that rotating it is a secret update rather than a code change.
+
+    Rotate with the overlap procedure: add the new value to the WAF allow list, update
+    the origin header, wait for the distribution to finish deploying, then remove the
+    old value. Rotating without the overlap is a full outage, and it is the step that
+    gets skipped.
   EOT
   type        = string
   default     = null

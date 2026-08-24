@@ -84,6 +84,22 @@ locals {
     }] : [],
   )
 
+  # Every upstream the distribution will be given, primary plus per-route.
+  origin_domains = local.public_front_door ? distinct(concat(
+    [var.cloudfront_origin_domain],
+    [for r in var.path_routes : r.origin_domain if r.origin_domain != null],
+  )) : []
+
+  # An internal ALB is not resolvable from the internet, so CloudFront cannot
+  # reach it as an ordinary custom origin. The distribution is accepted and then
+  # errors on every request, which looks like an origin outage rather than a
+  # configuration mistake.
+  unreachable_origins = [
+    for d in local.origin_domains :
+    format("%q is an internal load balancer and has no entry in cloudfront_vpc_origin_ids", d)
+    if d != null && startswith(d, "internal-") && !contains(keys(var.cloudfront_vpc_origin_ids), d)
+  ]
+
   shadowed_routes = flatten([
     for i, r in var.path_routes : [
       for j, later in var.path_routes :
@@ -205,15 +221,31 @@ resource "aws_api_gateway_rest_api" "this" {
       error_message = <<-EOT
         origin_secret_arn is required when exposure is "dual".
 
-        The origin header value must come from Secrets Manager rather than a literal:
-        a literal is written to the Terraform state and to the distribution config, and
-        the control is worth exactly as much as the secrecy of that value.
+        The origin header value comes from Secrets Manager rather than a variable, so
+        that it never sits in version control and rotating it is a secret update rather
+        than a code change. It does still reach the Terraform state, because CloudFront
+        takes a custom header only as a literal; the state file is part of the trust
+        boundary for this control.
       EOT
     }
 
     precondition {
       condition     = !local.public_front_door || var.cloudfront_origin_domain != null
       error_message = "cloudfront_origin_domain is required when exposure is \"dual\"."
+    }
+
+    precondition {
+      condition     = length(local.unreachable_origins) == 0
+      error_message = <<-EOT
+        A CloudFront origin points at an internal load balancer with no VPC origin.
+
+        AWS names an internal ALB "internal-<name>-<id>.<region>.elb.amazonaws.com",
+        and that name does not resolve on the public internet. CloudFront accepts the
+        distribution and then fails to connect to the origin on every request. Give the
+        origin an entry in cloudfront_vpc_origin_ids.
+
+        ${join("\n        ", local.unreachable_origins)}
+      EOT
     }
   }
 }
@@ -242,6 +274,14 @@ resource "aws_route53_zone" "private" {
     # from another account, which is how a shared services VPC usually joins, would
     # otherwise be removed on the next apply.
     ignore_changes = [vpc]
+
+    # zone_name drops the first label, so a two-label hostname would create a zone
+    # for the public suffix itself and answer for every name under it inside the
+    # VPC. Terraform accepts that; the blast radius is the whole VPC's resolution.
+    precondition {
+      condition     = length(split(".", var.hostname)) >= 3
+      error_message = "hostname \"${var.hostname}\" has no subdomain, so the zone this module would create is \"${local.zone_name}\". Supply private_hosted_zone_id instead, or use a hostname with a subdomain."
+    }
   }
 }
 
@@ -249,6 +289,92 @@ data "aws_vpc_endpoint" "execute_api" {
   id = local.endpoint_id
 
   depends_on = [aws_vpc_endpoint.execute_api]
+}
+
+###############################################################################
+# Private custom domain name
+#
+# A DNS record alone does not make api.example.com reach a private API. Pointing
+# it at the interface endpoint delivers the request, and then API Gateway has no
+# way to decide which API it is for: a private API is addressed by its execute-api
+# name, or by an x-apigw-api-id header, neither of which a consumer sends when it
+# calls the friendly hostname. The request gets a 403.
+#
+# A PRIVATE custom domain name is what closes that gap. API Gateway matches the
+# SNI name against the registered domain, the access association tells it which
+# endpoint may present that name, and the base path mapping says which API and
+# stage it resolves to. Only then does the record below route anything.
+#
+# This is also what makes the split-horizon claim true rather than aspirational:
+# the same hostname works from inside the VPC and, through CloudFront, from
+# outside, and an internal consumer changes nothing during the migration.
+###############################################################################
+
+resource "aws_api_gateway_domain_name" "private" {
+  count = var.create_private_domain_name ? 1 : 0
+
+  domain_name              = var.hostname
+  regional_certificate_arn = var.private_certificate_arn
+  security_policy          = "TLS_1_2"
+  tags                     = local.tags
+
+  endpoint_configuration {
+    types = ["PRIVATE"]
+  }
+
+  # A private domain name carries its own resource policy, evaluated before the
+  # API's. Without it the domain is reachable from any endpoint associated with
+  # it, which reopens the hole the API policy closes one layer down.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowThePermittedEndpointOnly"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "execute-api:Invoke"
+        Resource  = "*"
+        Condition = {
+          StringEquals = { "aws:SourceVpce" = local.endpoint_id }
+        }
+      },
+    ]
+  })
+
+  lifecycle {
+    precondition {
+      condition     = var.private_certificate_arn != null
+      error_message = <<-EOT
+        private_certificate_arn is required for the private custom domain name.
+
+        It is a REGIONAL certificate in this API's Region, not the us-east-1 one
+        CloudFront uses. The two are separate certificates for the same hostname.
+      EOT
+    }
+  }
+}
+
+# Names which VPC endpoint is allowed to present this domain name. Without it the
+# domain exists and resolves, and every call returns 403.
+resource "aws_api_gateway_domain_name_access_association" "private" {
+  count = var.create_private_domain_name ? 1 : 0
+
+  domain_name_arn                = aws_api_gateway_domain_name.private[0].arn
+  access_association_source      = local.endpoint_id
+  access_association_source_type = "VPCE"
+  tags                           = local.tags
+}
+
+# The stage belongs to whoever defines the API's methods, so it is a name here
+# rather than a reference. Null leaves the domain name unmapped, which is the
+# right state while the API body is still being built elsewhere.
+resource "aws_api_gateway_base_path_mapping" "private" {
+  count = var.create_private_domain_name && var.api_stage_name != null ? 1 : 0
+
+  api_id         = aws_api_gateway_rest_api.this.id
+  stage_name     = var.api_stage_name
+  domain_name    = aws_api_gateway_domain_name.private[0].domain_name
+  domain_name_id = aws_api_gateway_domain_name.private[0].domain_name_id
 }
 
 resource "aws_route53_record" "private" {
@@ -262,6 +388,25 @@ resource "aws_route53_record" "private" {
     name                   = tolist(data.aws_vpc_endpoint.execute_api.dns_entry)[0].dns_name
     zone_id                = tolist(data.aws_vpc_endpoint.execute_api.dns_entry)[0].hosted_zone_id
     evaluate_target_health = false
+  }
+
+  lifecycle {
+    # The record resolves the hostname to the endpoint. What makes the endpoint
+    # answer for that hostname is the domain name above, so publishing the record
+    # without it produces a name that resolves and then 403s on every call, which
+    # is a harder failure to read than one that does not resolve at all.
+    precondition {
+      condition     = var.create_private_domain_name || var.private_domain_name_id != null
+      error_message = <<-EOT
+        The private record would resolve api.example.com to the interface endpoint,
+        and API Gateway would then have no way to tell which private API the request
+        is for. Every call returns 403.
+
+        Either let the module create the private custom domain name, or set
+        private_domain_name_id to one that already exists, or set
+        create_dns_records = false and publish the record where the domain name lives.
+      EOT
+    }
   }
 }
 

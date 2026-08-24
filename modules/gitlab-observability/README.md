@@ -52,9 +52,23 @@ outage, and it is entirely preventable given warning. Three thresholds (70 ticke
 80 warn, 90 page), because the useful property of a disk alarm is lead time, not
 detection.
 
-4. Host status and backup freshness. The freshness alarm watches the age of the
-backup object rather than the exit code of the job, so a run that "succeeds" while
-writing nothing is still caught.
+4. Host status and backup freshness. The freshness alarm counts writes under the
+backup prefix rather than reading the exit code of the job, so a run that
+"succeeds" while writing nothing is still caught.
+
+### Why the backup alarm is not on `NumberOfObjects`
+
+That is the obvious metric and it cannot answer the question. `AWS/S3`
+`NumberOfObjects` is a storage metric: published once a day, counting every object
+in the bucket. Once a single backup exists it reports the same healthy number
+forever, so an alarm on it detects an empty bucket and nothing else. It also
+tempts a period longer than the 86400 seconds CloudWatch accepts, which fails at
+apply time.
+
+S3 request metrics have one-minute resolution and can be scoped to a prefix.
+`PutRequests` summed over the window, with `FilterId` pointing at a filter on the
+backup prefix, answers what was actually being asked. It carries a per-request
+metrics charge on that prefix.
 
 ## Two things it refuses
 

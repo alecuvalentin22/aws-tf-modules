@@ -54,19 +54,36 @@ resource "aws_cloudfront_distribution" "this" {
       origin_id   = origin.value
       domain_name = origin.value
 
-      custom_origin_config {
-        http_port              = 80
-        https_port             = 443
-        origin_protocol_policy = "https-only"
-        origin_ssl_protocols   = ["TLSv1.2"]
+      # A private origin is reached through a VPC origin, not over the internet.
+      # The two are mutually exclusive on one origin, so exactly one of these
+      # blocks is emitted per upstream.
+      dynamic "vpc_origin_config" {
+        for_each = contains(keys(var.cloudfront_vpc_origin_ids), origin.value) ? [1] : []
+
+        content {
+          vpc_origin_id = var.cloudfront_vpc_origin_ids[origin.value]
+        }
+      }
+
+      dynamic "custom_origin_config" {
+        for_each = contains(keys(var.cloudfront_vpc_origin_ids), origin.value) ? [] : [1]
+
+        content {
+          http_port              = 80
+          https_port             = 443
+          origin_protocol_policy = "https-only"
+          origin_ssl_protocols   = ["TLSv1.2"]
+        }
       }
 
       # Proves to the origin that the request arrived through this distribution.
       # The regional WAF denies by default and allows only requests carrying it.
       #
-      # This holds for exactly as long as the secret does, which is why it is a
-      # transitional control rather than the answer. The answer is that a private
-      # API has no public endpoint to bypass to.
+      # This holds for exactly as long as the secret does, and the secret is in
+      # the Terraform state and in the distribution config, because CloudFront
+      # takes a custom header only as a literal. That is why it is a transitional
+      # control rather than the answer. The answer is that a private API has no
+      # public endpoint to bypass to.
       custom_header {
         name  = var.origin_secret_header_name
         value = data.aws_secretsmanager_secret_version.origin[0].secret_string

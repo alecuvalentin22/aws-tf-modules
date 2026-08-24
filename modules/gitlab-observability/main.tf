@@ -38,6 +38,15 @@ locals {
     warn   = { threshold = var.disk_thresholds.warn, severity = "warning" }
     page   = { threshold = var.disk_thresholds.page, severity = "page" }
   }
+
+  # A CloudWatch alarm matches a metric only on an exact dimension set. An alarm
+  # with no dimensions therefore watches the zero-dimension metric, which is not
+  # the one anything publishes, and it sits in INSUFFICIENT_DATA forever. That is
+  # the same defect this module refuses to commit for disk and memory, so the
+  # GitLab-sourced alarms get a dimension set too.
+  gitlab_dimensions = length(var.gitlab_metric_dimensions) > 0 ? var.gitlab_metric_dimensions : {
+    InstanceId = var.instance_id
+  }
 }
 
 resource "aws_sns_topic" "alarms" {
@@ -62,7 +71,7 @@ resource "aws_sns_topic_subscription" "alarms" {
 resource "aws_synthetics_canary" "this" {
   for_each = var.canaries
 
-  name                 = substr(replace("${var.name}-${each.key}", "_", "-"), 0, 21)
+  name                 = replace("${var.name}-${each.key}", "_", "-")
   artifact_s3_location = "s3://${var.canary_results_bucket}/${var.name}/${each.key}"
   execution_role_arn   = var.canary_execution_role_arn
   handler              = each.value.handler
@@ -71,6 +80,10 @@ resource "aws_synthetics_canary" "this" {
   s3_key               = each.value.artifact_s3_key
   start_canary         = true
   tags                 = local.tags
+
+  # Synthetics leaves the underlying Lambda behind on destroy otherwise, and the
+  # orphan keeps its log group and its ENIs.
+  delete_lambda = true
 
   schedule {
     expression = each.value.schedule_expression
@@ -94,6 +107,14 @@ resource "aws_synthetics_canary" "this" {
     precondition {
       condition     = var.canary_results_bucket != null
       error_message = "canary_results_bucket is required when canaries are defined."
+    }
+
+    # Synthetics caps canary names at 21 characters. Truncating to fit is worse
+    # than refusing: two keys sharing a prefix collapse to the same name, and the
+    # alarm then watches a canary other than the one it is named after.
+    precondition {
+      condition     = length("${var.name}-${each.key}") <= 21
+      error_message = "Canary name \"${var.name}-${each.key}\" is longer than the 21 characters Synthetics allows. Shorten var.name or the canary key."
     }
   }
 }
@@ -141,6 +162,7 @@ resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency" {
   namespace   = var.gitlab_metrics_namespace
   metric_name = "sidekiq_queue_latency_seconds"
   statistic   = "Maximum"
+  dimensions  = local.gitlab_dimensions
 
   period              = 300
   evaluation_periods  = 2
@@ -238,25 +260,51 @@ resource "aws_cloudwatch_metric_alarm" "instance_status" {
   tags          = local.tags
 }
 
+# Backup freshness.
+#
+# The obvious implementation is an alarm on AWS/S3 NumberOfObjects, and it does
+# not work. That is a storage metric: it is published once a day, it counts every
+# object in the bucket, and it therefore reports the same healthy number forever
+# once a single backup exists. An alarm on it detects an empty bucket, which is
+# not the failure anyone is worried about.
+#
+# S3 request metrics are the ones with a one-minute resolution, and they can be
+# scoped to a prefix. PutRequests summed over the backup window answers the
+# question actually being asked: has anything been written under the backup
+# prefix recently. It costs a per-request metrics charge on that prefix.
+resource "aws_s3_bucket_metric" "backups" {
+  count = var.backup_bucket_name == null ? 0 : 1
+
+  bucket = var.backup_bucket_name
+  name   = "${var.name}-backups"
+
+  filter {
+    prefix = var.backup_object_prefix
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "backup_freshness" {
   count = var.backup_bucket_name == null ? 0 : 1
 
   alarm_name        = "${var.name}-backup-stale"
-  alarm_description = "No GitLab backup written to s3://${var.backup_bucket_name} in ${var.backup_max_age_hours}h. A backup job that stops producing raises nothing on its own."
+  alarm_description = "No object written under s3://${var.backup_bucket_name}/${var.backup_object_prefix} in ${var.backup_max_age_hours}h. A backup job that stops producing raises nothing on its own, and a run that exits zero while writing nothing raises less than that."
 
   namespace   = "AWS/S3"
-  metric_name = "NumberOfObjects"
-  statistic   = "Average"
+  metric_name = "PutRequests"
+  statistic   = "Sum"
   dimensions = {
-    BucketName  = var.backup_bucket_name
-    StorageType = "AllStorageTypes"
+    BucketName = var.backup_bucket_name
+    FilterId   = aws_s3_bucket_metric.backups[0].name
   }
 
   period              = var.backup_max_age_hours * 3600
   evaluation_periods  = 1
   threshold           = 1
   comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "breaching"
+
+  # No writes and no datapoints are the same event here, so the two must be
+  # treated the same way.
+  treat_missing_data = "breaching"
 
   alarm_actions = local.alarm_actions
   ok_actions    = local.alarm_actions

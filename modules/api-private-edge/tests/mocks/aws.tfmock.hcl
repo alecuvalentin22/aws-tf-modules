@@ -131,3 +131,12 @@ mock_resource "aws_route53_zone" {
     zone_id = "Z0987654321XYZ"
   }
 }
+
+# The provider parses domain_name_arn client-side before the access association
+# is planned, so a generated value fails before any assertion runs.
+mock_resource "aws_api_gateway_domain_name" {
+  defaults = {
+    arn            = "arn:aws:apigateway:eu-central-1:111111111111:/domainnames/api.example.com+abcd1234"
+    domain_name_id = "abcd1234"
+  }
+}

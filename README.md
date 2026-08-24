@@ -94,9 +94,9 @@ done
 | --- | --- |
 | `backup-policy` | 63 |
 | `backup-policy/modules/backup-vault` | 20 |
-| `api-private-edge` | 15 |
-| `gitlab-observability` | 12 |
-| | **110** |
+| `api-private-edge` | 23 |
+| `gitlab-observability` | 17 |
+| | **123** |
 
 No AWS account or credentials are needed. Every test runs against `mock_provider`,
 which is what makes them usable as a required check rather than a nightly job someone
@@ -122,8 +122,8 @@ python3 scripts/lint_policies.py
 | Check | Status |
 | --- | --- |
 | `terraform fmt` / `validate` | clean |
-| `terraform test` - 110 tests, mocked provider | passing |
-| Lambda unit tests - 28 tests | passing |
+| `terraform test` - 123 tests, mocked provider | passing |
+| Lambda unit tests - 36 tests | passing |
 | `scripts/lint_policies.py` - every rendered policy through an IAM linter | 8/8 clean |
 
 The policy linter renders the policies from a real `terraform plan` and checks them against
@@ -158,7 +158,7 @@ modules/api-private-edge/           Scenario 2: private API through PrivateLink,
 modules/gitlab-observability/       Scenario 3: canaries and the alarms that matter
 
 lambdas/kms-rotation-compliance/    Scenario 1, Q3: the custom AWS Config rule, with
-                                    28 unit tests that need no boto3 and no credentials
+                                    36 unit tests that need no boto3 and no credentials
 
 runbooks/backup-restore.md          Which of the three copies to restore from, and why
                                     that choice is not interchangeable

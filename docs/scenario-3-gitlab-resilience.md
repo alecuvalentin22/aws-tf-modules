@@ -270,12 +270,21 @@ paging.
 
 ### 6. Backup freshness
 
-An alarm that fires when no successful backup has completed in 26 hours, with
-`treat_missing_data = "breaching"`. Backups fail silently; that is their defining
-characteristic.
+An alarm that fires when nothing has been written under the backup prefix within
+the backup window, with `treat_missing_data = "breaching"`. Backups fail silently;
+that is their defining characteristic. Watch what arrived in the bucket rather than
+the job's exit code, so a run that "succeeds" while writing nothing is still caught.
 
-Alarm on the S3 object's age rather than on the job's exit code, so a job that
-"succeeds" while writing nothing is still caught.
+The metric matters here. `AWS/S3 NumberOfObjects` is the obvious choice and it is
+the wrong one: it is a storage metric, published once a day, counting every object
+in the bucket, so once a single backup exists it reports the same healthy number
+forever. An alarm on it detects an empty bucket and nothing else.
+
+S3 **request metrics** have one-minute resolution and can be scoped to a prefix.
+`PutRequests` summed over the window, with the `FilterId` dimension pointing at a
+filter on the backup prefix, answers the question actually being asked. Note also
+that CloudWatch caps an alarm period at 86400 seconds, so a 26-hour window has to
+become a 24-hour one or move to a metric maths expression over shorter periods.
 
 ### 7. Monitoring must live off the instance
 

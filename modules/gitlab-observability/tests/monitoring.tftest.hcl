@@ -67,6 +67,104 @@ run "every_critical_alarm_treats_missing_data_as_breaching" {
 }
 
 # --------------------------------------------------------------------------
+# An alarm that cannot match a metric is the same defect as an alarm on a
+# metric nobody publishes. Both sit in INSUFFICIENT_DATA and read as healthy.
+# --------------------------------------------------------------------------
+
+run "every_alarm_carries_a_dimension_set" {
+  command = apply
+
+  variables {
+    cloudwatch_agent_installed = true
+    enable_sidekiq_alarms      = true
+    backup_bucket_name         = "gitlab-backups"
+  }
+
+  # CloudWatch matches on the exact dimension set, so an empty one watches the
+  # zero-dimension metric, which is not the one anything publishes.
+  assert {
+    condition = alltrue([
+      for a in aws_cloudwatch_metric_alarm.sidekiq_queue_latency :
+      a.dimensions["InstanceId"] == var.instance_id
+    ])
+    error_message = "A dimensionless Sidekiq alarm never matches the published metric and stays in INSUFFICIENT_DATA."
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.instance_status.dimensions) > 0
+    error_message = "Every alarm here must name what it is watching."
+  }
+}
+
+run "gitlab_metric_dimensions_can_be_overridden" {
+  command = apply
+
+  variables {
+    enable_sidekiq_alarms = true
+
+    gitlab_metric_dimensions = {
+      Host  = "gitlab-01"
+      Queue = "default"
+    }
+  }
+
+  # Whatever ships the Prometheus metrics decides the dimension set; the module
+  # cannot guess it.
+  assert {
+    condition = alltrue([
+      for a in aws_cloudwatch_metric_alarm.sidekiq_queue_latency :
+      a.dimensions["Queue"] == "default" && !contains(keys(a.dimensions), "InstanceId")
+    ])
+    error_message = "An explicit dimension set should replace the default, not extend it."
+  }
+}
+
+# --------------------------------------------------------------------------
+# Backup freshness
+# --------------------------------------------------------------------------
+
+run "the_backup_alarm_counts_writes_under_the_backup_prefix" {
+  command = apply
+
+  variables {
+    backup_bucket_name   = "gitlab-backups"
+    backup_object_prefix = "daily/"
+    backup_max_age_hours = 24
+  }
+
+  # NumberOfObjects is a once-a-day storage metric counting the whole bucket. It
+  # reports the same healthy number forever once one backup exists, so an alarm
+  # on it detects an empty bucket and nothing else.
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.backup_freshness[0].metric_name == "PutRequests"
+    error_message = "Backup staleness needs a request metric, not a daily storage metric."
+  }
+
+  assert {
+    condition     = aws_s3_bucket_metric.backups[0].filter[0].prefix == "daily/"
+    error_message = "The request-metrics filter must be scoped to the backup prefix; an unrelated write elsewhere in the bucket is not a backup."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.backup_freshness[0].dimensions["FilterId"] == aws_s3_bucket_metric.backups[0].name
+    error_message = "The alarm must reference the filter, or it measures every write to the bucket."
+  }
+}
+
+run "rejects_a_backup_window_longer_than_a_cloudwatch_period" {
+  command = plan
+
+  variables {
+    backup_bucket_name   = "gitlab-backups"
+    backup_max_age_hours = 26
+  }
+
+  # 26 hours is 93600 seconds. CloudWatch caps an alarm period at 86400 and
+  # rejects the alarm at apply time, so the guardrail belongs at plan time.
+  expect_failures = [var.backup_max_age_hours]
+}
+
+# --------------------------------------------------------------------------
 # The health check trap
 # --------------------------------------------------------------------------
 
@@ -248,6 +346,28 @@ run "rejects_a_non_https_base_url" {
   }
 
   expect_failures = [var.base_url]
+}
+
+run "rejects_a_canary_name_synthetics_would_truncate" {
+  command = plan
+
+  variables {
+    name = "gitlab-production"
+
+    canaries = {
+      clone_over_https = {
+        artifact_s3_bucket = "canary-artifacts"
+        artifact_s3_key    = "clone-https.zip"
+      }
+    }
+    canary_execution_role_arn = "arn:aws:iam::111111111111:role/canary"
+    canary_results_bucket     = "canary-results"
+  }
+
+  # Synthetics caps names at 21 characters. Truncating to fit collapses two keys
+  # sharing a prefix onto one name, and the alarm then watches a canary other
+  # than the one it is named after.
+  expect_failures = [aws_synthetics_canary.this["clone_over_https"]]
 }
 
 run "canaries_require_their_execution_role" {

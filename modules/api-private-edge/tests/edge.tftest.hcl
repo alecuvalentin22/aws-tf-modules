@@ -15,6 +15,118 @@ variables {
 
   vpc_endpoint_subnet_ids         = ["subnet-aaa", "subnet-bbb"]
   vpc_endpoint_security_group_ids = ["sg-0123456789abcdef0"]
+
+  # REGIONAL, in the API's own Region. certificate_arn below is the us-east-1 one
+  # CloudFront reads. The same hostname needs both.
+  private_certificate_arn = "arn:aws:acm:eu-central-1:111111111111:certificate/private"
+
+  # The dual-exposure runs front an internal ALB, which does not resolve on the
+  # public internet and so has to be reached as a VPC origin.
+  cloudfront_vpc_origin_ids = {
+    "internal-alb.eu-central-1.elb.amazonaws.com" = "vo-0123456789abcdef0"
+  }
+}
+
+# --------------------------------------------------------------------------
+# A DNS record is not enough to reach a private API
+# --------------------------------------------------------------------------
+
+run "the_hostname_is_registered_as_a_private_custom_domain_name" {
+  command = apply
+
+  # Resolving api.example.com to the interface endpoint delivers the request and
+  # leaves API Gateway with no way to tell which private API it is for: a private
+  # API is addressed by its execute-api name or by an x-apigw-api-id header, and a
+  # consumer calling the friendly hostname sends neither. The result is a 403 on
+  # every call, from a name that resolves perfectly.
+  assert {
+    condition = alltrue([
+      for c in aws_api_gateway_domain_name.private[0].endpoint_configuration :
+      contains(c.types, "PRIVATE")
+    ])
+    error_message = "The custom domain name must itself be PRIVATE; a REGIONAL one is publicly resolvable and reintroduces the bypass."
+  }
+
+  assert {
+    condition     = aws_api_gateway_domain_name_access_association.private[0].access_association_source == aws_vpc_endpoint.execute_api[0].id
+    error_message = "Without an access association naming the endpoint, the domain name resolves and every call returns 403."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in jsondecode(aws_api_gateway_domain_name.private[0].policy).Statement :
+      try(s.Condition.StringEquals["aws:SourceVpce"], null) == aws_vpc_endpoint.execute_api[0].id
+    ])
+    error_message = "The domain name policy is evaluated before the API's, so it needs the endpoint condition too."
+  }
+}
+
+run "refuses_a_record_that_would_resolve_and_then_403" {
+  command = plan
+
+  variables {
+    create_private_domain_name = false
+    # private_domain_name_id deliberately omitted.
+  }
+
+  # A name that resolves and then fails is harder to diagnose than one that does
+  # not resolve, so the module refuses to publish the record on its own.
+  expect_failures = [aws_route53_record.private[0]]
+}
+
+run "the_domain_name_can_be_owned_by_another_stack" {
+  command = apply
+
+  variables {
+    create_private_domain_name = false
+    private_domain_name_id     = "abcd1234"
+  }
+
+  assert {
+    condition     = length(aws_api_gateway_domain_name.private) == 0
+    error_message = "The module should not create a domain name it was told already exists."
+  }
+
+  assert {
+    condition     = length(aws_route53_record.private) == 1
+    error_message = "The record should still be published against the existing domain name."
+  }
+}
+
+run "the_stage_mapping_is_created_only_once_a_stage_is_named" {
+  command = apply
+
+  variables {
+    api_stage_name = "v1"
+  }
+
+  # The methods, the deployment and the stage belong to whoever defines what the
+  # API does. This module owns only how it is exposed.
+  assert {
+    condition     = aws_api_gateway_base_path_mapping.private[0].stage_name == "v1"
+    error_message = "A named stage should be mapped onto the domain name."
+  }
+}
+
+run "no_stage_named_leaves_the_domain_name_unmapped" {
+  command = apply
+
+  assert {
+    condition     = length(aws_api_gateway_base_path_mapping.private) == 0
+    error_message = "Mapping a stage that does not exist yet fails the apply; unmapped is the correct interim state."
+  }
+}
+
+run "refuses_to_create_a_private_zone_for_a_public_suffix" {
+  command = plan
+
+  variables {
+    hostname = "example.com"
+  }
+
+  # zone_name drops the first label, so a two-label hostname would create a zone
+  # for "com" and answer for every name under it inside the VPC.
+  expect_failures = [aws_route53_zone.private[0]]
 }
 
 # --------------------------------------------------------------------------
@@ -257,6 +369,47 @@ run "rejects_duplicate_path_patterns" {
   }
 
   expect_failures = [var.path_routes]
+}
+
+run "an_internal_alb_origin_must_be_reached_as_a_vpc_origin" {
+  command = plan
+
+  variables {
+    exposure                 = "dual"
+    certificate_arn          = "arn:aws:acm:us-east-1:111111111111:certificate/abcd"
+    cloudfront_origin_domain = "internal-alb.eu-central-1.elb.amazonaws.com"
+    origin_secret_arn        = "arn:aws:secretsmanager:eu-central-1:111111111111:secret:origin-abcd"
+    public_hosted_zone_id    = "Z0PUBLIC"
+
+    # Overrides the shared fixture: no VPC origin for the internal ALB.
+    cloudfront_vpc_origin_ids = {}
+  }
+
+  # An internal ALB does not resolve on the public internet. CloudFront accepts
+  # the distribution and then fails to connect on every request, which reads as an
+  # origin outage rather than a configuration mistake.
+  expect_failures = [aws_api_gateway_rest_api.this]
+}
+
+run "a_vpc_origin_replaces_the_custom_origin_config" {
+  command = apply
+
+  variables {
+    exposure                 = "dual"
+    certificate_arn          = "arn:aws:acm:us-east-1:111111111111:certificate/abcd"
+    cloudfront_origin_domain = "internal-alb.eu-central-1.elb.amazonaws.com"
+    origin_secret_arn        = "arn:aws:secretsmanager:eu-central-1:111111111111:secret:origin-abcd"
+    public_hosted_zone_id    = "Z0PUBLIC"
+  }
+
+  # The two are mutually exclusive on one origin, so exactly one is emitted.
+  assert {
+    condition = alltrue([
+      for o in aws_cloudfront_distribution.this[0].origin :
+      length(o.vpc_origin_config) == 1 && length(o.custom_origin_config) == 0
+    ])
+    error_message = "An origin listed in cloudfront_vpc_origin_ids must use vpc_origin_config and nothing else."
+  }
 }
 
 # --------------------------------------------------------------------------

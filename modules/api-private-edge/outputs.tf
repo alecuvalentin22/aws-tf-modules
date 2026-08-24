@@ -22,6 +22,14 @@ output "api_resource_policy_json" {
   value       = local.api_policy
 }
 
+output "private_domain_name_id" {
+  description = <<-EOT
+    The private custom domain name the hostname resolves to, whether created here or
+    supplied. Needed to map further stages onto the same hostname.
+  EOT
+  value       = var.create_private_domain_name ? aws_api_gateway_domain_name.private[0].domain_name_id : var.private_domain_name_id
+}
+
 output "private_hosted_zone_id" {
   description = "Private hosted zone serving the hostname inside the VPC."
   value       = local.private_zone_id
