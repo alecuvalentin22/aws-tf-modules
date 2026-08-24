@@ -4,8 +4,8 @@ Deliberately broken policies. `scripts/lint_policies.py` runs each of these
 through the linter **before** it looks at the real ones, and fails if any comes
 back clean.
 
-The point is narrow but important: a linter that reports "clean" tells you
-nothing unless you know it is capable of reporting something else. A dependency
+The point is narrow but important: a linter reporting "clean" carries no
+information unless it is known to be capable of reporting something else. A dependency
 upgrade that defanged `parliament` would otherwise turn the whole check
 into a green tick that verifies nothing, which is worse than having no check,
 because it is trusted.
