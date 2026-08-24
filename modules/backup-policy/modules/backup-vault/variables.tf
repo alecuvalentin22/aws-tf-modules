@@ -67,6 +67,20 @@ variable "source_account_ids" {
   }
 }
 
+variable "source_principal_arns" {
+  description = <<-EOT
+    Specific principals in the source accounts allowed to copy into this vault and use its
+    key -- normally the source account's AWS Backup service role.
+
+    Empty falls back to the source account roots, which is what a caller can always supply
+    but grants every principal in those accounts that IAM also allows. Naming the role is
+    the strongest narrowing available here, and unlike a condition key it cannot be absent
+    from a request.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "lock" {
   description = <<-EOT
     Vault Lock (WORM) configuration.

@@ -82,8 +82,14 @@ variable "rules" {
     # wholesale -- a partial override that silently dropped cold_storage_after
     # would keep a seven-year copy in warm storage.
     copy_retention = optional(map(object({
-      delete_after                              = optional(number)
-      cold_storage_after                        = optional(number)
+      delete_after       = optional(number)
+      cold_storage_after = optional(number)
+
+      # Merging field by field means null has to mean "inherit", which leaves no
+      # way to say "no cold tier on this hop". This is that sentinel. Without it a
+      # short WARM operational copy of a rule that tiers to cold is inexpressible
+      # -- and worse, it inherits a cold transition that makes restores take hours.
+      disable_cold_storage                      = optional(bool, false)
       opt_in_to_archive_for_supported_resources = optional(bool)
     })), {})
   }))
@@ -156,6 +162,7 @@ variable "rules" {
         ],
         [
           for c in values(r.copy_retention) :
+          c.disable_cold_storage ||
           (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) == null ||
           coalesce(c.delete_after, r.retention.delete_after) >=
           (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) + 90
@@ -197,7 +204,8 @@ variable "rules" {
           !(c.opt_in_to_archive_for_supported_resources != null
             ? c.opt_in_to_archive_for_supported_resources
           : r.retention.opt_in_to_archive_for_supported_resources) ||
-          (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) != null
+          (!c.disable_cold_storage &&
+          (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) != null)
         ],
       )
     ]))
@@ -226,6 +234,16 @@ variable "rules" {
 
   # A copy_retention key that names no destination is almost always a typo that
   # would otherwise be silently ignored.
+  validation {
+    condition = alltrue(flatten([
+      for r in var.rules : [
+        for c in values(r.copy_retention) :
+        !c.disable_cold_storage || c.cold_storage_after == null
+      ]
+    ]))
+    error_message = "A copy_retention override cannot set both disable_cold_storage and cold_storage_after."
+  }
+
   validation {
     condition = alltrue([
       for r in var.rules :
@@ -282,16 +300,29 @@ variable "copy_destinations" {
       lock_min_retention_days / lock_max_retention_days
                   For an external destination, the retention window its Vault Lock enforces.
                   Supplying these lets the module reject, at plan time, a retention that the
-                  destination would reject nightly at run time. Leave null to skip the check.
+                  destination would reject nightly at run time. Omitting both is an ERROR
+                  unless acknowledge_unchecked_copy_destinations is set: failing open with no
+                  signal on the least observable hop is the wrong default for a guardrail.
+
+      kms_key_arn_external
+                  For an external destination, the ARN of the KMS key encrypting it.
+                  REQUIRED when this module builds the backup role. The destination key
+                  policy granting <this account>:root only DELEGATES to this account's IAM;
+                  the role also needs an allow naming that key, or every encrypted
+                  cross-account copy fails with AccessDenied.
   EOT
 
   type = map(object({
-    region                      = optional(string)
-    vault_arn                   = optional(string)
-    name                        = optional(string)
-    create_kms_key              = optional(bool, true)
+    region    = optional(string)
+    vault_arn = optional(string)
+    name      = optional(string)
+
+    # No default, so "unset" stays distinguishable from "explicitly true" and the
+    # validation below can reject it on an external destination instead of
+    # silently ignoring it. Managed destinations get true.
+    create_kms_key              = optional(bool)
     kms_key_arn                 = optional(string)
-    kms_deletion_window_in_days = optional(number, 30)
+    kms_deletion_window_in_days = optional(number)
     lock = optional(object({
       enabled             = optional(bool, true)
       mode                = optional(string, "governance")
@@ -299,6 +330,11 @@ variable "copy_destinations" {
       min_retention_days  = optional(number, 7)
       max_retention_days  = optional(number, 3650)
     }), {})
+    # For an EXTERNAL destination, the window its Vault Lock enforces. This module
+    # cannot read a lock in another account, so declaring it is what allows the
+    # plan-time retention check to cover the cross-account hop. Omitting BOTH is a
+    # plan-time error unless acknowledge_unchecked_copy_destinations is set --
+    # not a silent skip.
     lock_min_retention_days = optional(number)
     lock_max_retention_days = optional(number)
 
@@ -332,6 +368,25 @@ variable "copy_destinations" {
       d.vault_arn == null || can(regex("^arn:aws[a-z-]*:backup:[a-z0-9-]+:[0-9]{12}:backup-vault:", d.vault_arn))
     ])
     error_message = "Each external destination's vault_arn must be a backup vault ARN (arn:aws:backup:<region>:<account>:backup-vault:<name>)."
+  }
+
+  # Fields that apply to only one kind of destination are rejected on the other
+  # rather than silently ignored. A setting that appears to take effect and does
+  # not is worse than one that is refused.
+  validation {
+    condition = alltrue([
+      for k, d in var.copy_destinations :
+      d.vault_arn != null || (d.kms_key_arn_external == null && d.lock_min_retention_days == null && d.lock_max_retention_days == null)
+    ])
+    error_message = "kms_key_arn_external, lock_min_retention_days and lock_max_retention_days apply only to external destinations (those with vault_arn set). A managed destination's key and lock are configured through create_kms_key/kms_key_arn and lock."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, d in var.copy_destinations :
+      d.region != null || (d.kms_key_arn == null && d.create_kms_key == null && d.kms_deletion_window_in_days == null)
+    ])
+    error_message = "create_kms_key and kms_key_arn apply only to managed destinations (those with region set). An external destination's key belongs to the account that owns it; declare it with kms_key_arn_external."
   }
 }
 

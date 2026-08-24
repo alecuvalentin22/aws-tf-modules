@@ -57,8 +57,8 @@ The sharpest edge of it: the staleness alarm is the one control that detects a p
 has stopped running at all, and it would have been the one guaranteed never to fire.
 
 *Fixed:* a customer managed key per Region whose policy names the three publishing service
-principals. Four tests assert both the key policy and the topic policy grant each of them,
-and one asserts specifically that `alias/aws/sns` is not used.
+principals. Three tests cover it: one on the key policy, one on the topic policy, and one
+asserting specifically that `alias/aws/sns` is not used.
 
 ### Cross-account permission path
 
@@ -69,9 +69,12 @@ the four required permissions and had no way to express the fourth — every enc
 cross-account copy would have failed with `AccessDenied` on the destination key, nightly.
 
 *Fixed:* `kms_key_arn_external` added to external destinations and folded into the role's
-policy. It is **required**, enforced by a precondition whose message explains the
-delegation trap, because an optional field here is a silent failure waiting to happen. The
-four-grant path is documented as a table in the module README and asserted end to end.
+policy. It is **required** whenever this module builds the backup role, enforced by a
+precondition whose message explains the delegation trap, because an optional field here is
+a silent failure waiting to happen. The four-grant path is documented as a table in the
+module README, and asserted on both sides — grants 1–2 in the root module's suite, 3–4 in
+the vault module's. Nothing asserts the ARNs match across the account boundary; that is
+what the governance-mode restore rehearsal is for.
 
 **The destination key granted an entire external account unconditional access.**
 `AllowSourceAccountsToCopyIn` granted the full data plane plus `kms:CreateGrant` on
@@ -178,9 +181,14 @@ five policies were entirely unverified.
 
 *Fixed:* policies are now built with `jsonencode`, which makes them plain values a test
 can decode and assert on. Twenty tests across the two modules now check the rendered
-statements, including the full four-grant cross-account path. Several tautological
-assertions — ones restating an input map's size — were replaced with assertions on
-rendered resource attributes.
+statements, including both halves of the cross-account path.
+
+Several assertions that restate an input map's size remain — `length(local.managed_regions) == 2`
+and similar. They are cheap structural checks rather than the load-bearing ones, and the
+second review pass was right to point out that an earlier version of this page claimed
+they had all been replaced. The assertions that matter now walk rendered resource
+attributes: the audit framework's `input_parameter` values, the rendered policy statements,
+the alarm settings.
 
 ---
 
@@ -208,23 +216,96 @@ those resources do need an owner — so it is documented rather than suppressed.
 
 ---
 
-## Verified, not defects
+## Verified, and what remains genuinely open
 
 Several findings were flagged `VERIFY` rather than asserted, which was the right call.
 Checked against the provider schema:
 
-- `aws_backup_global_settings` has no `region` attribute — confirmed, and handled above.
-- The `aws_backup_framework` control names used are all accepted by the provider.
+- `aws_backup_global_settings` has no `region` attribute — confirmed absent, and handled
+  above.
 - `aws_backup_restore_testing_plan` and `aws_backup_restore_testing_selection` exist in
   v6 with the arguments used.
 
-Two remain genuinely open and could only be settled against a live account:
+Both of those are statements about the **provider schema**, not about the AWS API. That
+distinction matters and an earlier version of this page blurred it: `aws_backup_framework`
+declares `control.name` as a plain required string with no validator, so "the provider
+accepts these control names" is true of *any* string and proves nothing about whether AWS
+does. `terraform validate` passing is not semantic correctness.
 
-- Whether the account root is exempt from an explicit `Deny` in a Backup vault access
-  policy. The lockout half of that finding was fixed regardless, since the
-  Terraform-lifecycle problem did not depend on the answer.
-- Whether AWS Backup populates `aws:SourceAccount` on its `AssumeRole` call. Mitigated by
-  switching to `IfExists`, which is correct either way.
+Open, and only settleable against a live account:
+
+| Question | Mitigation taken |
+| --- | --- |
+| Whether AWS Backup populates `kms:ViaService` on copy-time KMS calls, or authorises them through a grant | `StringLikeIfExists` with a wildcard Region, so the condition cannot fail closed either way. The real narrowing is `source_principal_arns`, which names the source role and does not depend on a context key |
+| Whether AWS Backup populates `aws:SourceAccount` on `AssumeRole` | `StringEqualsIfExists` / `ArnLikeIfExists`, correct either way |
+| Whether the account root is exempt from an explicit `Deny` in a Backup vault access policy | The lockout was fixed regardless; the Terraform-lifecycle half never depended on the answer |
+| Whether the Audit Manager control names and their parameter requirements are accepted by the API | None available offline. First apply will say |
+| Whether `ControlScope` accepts a tag scope on every control it is applied to | Scope is applied only to the `BACKUP_RESOURCES_PROTECTED_BY_*` family, which AWS documents as resource-scoped |
 
 Flagging these as uncertain rather than asserting them was more useful than a confident
 guess would have been, in both directions.
+
+---
+
+## Second pass
+
+The revised module went back to the same reviewer with the same brief. **No blockers**,
+and the three original blockers were confirmed fixed by inspection rather than taken on
+trust. But six of the fixes had introduced new defects, four confirmed by tests the
+reviewer wrote to break the module.
+
+The most serious was a fix undoing another fix:
+
+**One acknowledgement flag gated two unrelated guards.**
+`acknowledge_unchecked_copy_destinations` waived both the undeclared-lock-window check and
+the `kms_key_arn_external` requirement. Worse, the "unchecked" list counted *managed*
+destinations whose lock was deliberately disabled — so an ordinary sandbox, one unlocked
+copy Region, forced the flag on, and the flag then waived the cross-account KMS
+requirement. The largest finding from pass one silently re-opened, with the module's own
+"the gap is visible" output reporting nothing.
+
+*Fixed:* the two are separate concerns and are now separately enforced. The KMS
+requirement is not waivable at all. A lock the operator turned off is a stated intent, not
+an unknown, and no longer consumes an acknowledgement — it is reported in
+`unvalidated_retention_targets`, which now also covers the primary vault. The previous
+version errored loudly when it could not check a copy hop and stayed silent when it could
+not check the vault every job writes to first, which is the reverse of the risk order.
+
+The rest:
+
+| Found | Response |
+| --- | --- |
+| `kms:ViaService` used a plain, fail-closed `StringEquals` pinned to one Region — contradicting the `IfExists` rule stated in a comment 30 lines above, on the one path with the least observability | `StringLikeIfExists` with a wildcard Region, plus `source_principal_arns` to narrow by role rather than by context key. The two tests that had enshrined opposite conventions now agree |
+| The SNS **topic** policy used plain `StringEquals` on `aws:SourceAccount` while the **key** policy protecting the same publish used `IfExists` | Both use `IfExists`. A test asserts they agree |
+| A `DenyInsecureTransport` statement was dropped in the `jsonencode` conversion, and the SNS default owner grant was replaced without being restated | Both restored, both tested |
+| `cold_storage_after` could be set in a copy override but never cleared, so a short warm operational copy became inexpressible — and the `complete` example's own cross-Region copy silently gained a cold transition its comment said it did not have | `disable_cold_storage` sentinel added; the example corrected |
+| `rate()` schedules mapped to a 1-day gap, reproducing the exact false positive the frequency derivation was written to remove | `rate(N unit)` parsed |
+| The frequency parameter used `max` across rules. The control passes if *any* rule meets it, so the least frequent tier made it satisfiable by the monthly rule alone — the daily tier could be deleted undetected | `min`. The opposite error from the hardcoded `"1"`, not its correction |
+| `vault_force_destroy` was inert against the deny-delete policy it ships alongside — `AccessDenied` on destroy with nothing to say which setting caused it | Precondition rejecting the combination, naming both ways out |
+| Fields applying to one kind of destination were silently ignored on the other | Refused with a message saying which field belongs where |
+| Restore-testing selection names sanitised hyphens only, so a resource type containing spaces was rejected at apply | Full sanitisation |
+
+On test quality, the reviewer found four audit tests that stopped at a local — swapping
+two locals inside `audit.tf` would have left all four passing — and one assertion
+comparing a list to a string, vacuously true for two of three statements. All now walk the
+rendered resource. One run asserted the opposite of what its name said and has been
+renamed.
+
+Seven regression tests were added for the findings above. Test count 73 → 83.
+
+### What the second pass did not change
+
+**The cross-account copy is still never restore-tested.** It lives in an account this
+module has no credentials for, so testing it means a restore testing plan in the backup
+account's own deployment. Documented in the scenario notes and the runbook rather than
+papered over — it is the copy you would reach for during a ransomware incident, so it is
+the worst one to be restoring from for the first time.
+
+**Narrowing a committed compliance lock still produces a raw API error.** The
+acknowledgement precondition covers creation only. Detecting the narrowing case means
+reading the live lock state, which a plan cannot do.
+
+**The framework's scope remains wider than the plan's selection**, because pattern-matched
+tags cannot be expressed in a `ControlScope`. Resources tagged `ToBackup=true` with no
+owner will be reported unprotected. That finding is correct — those resources do need an
+owner — so it is documented rather than suppressed.

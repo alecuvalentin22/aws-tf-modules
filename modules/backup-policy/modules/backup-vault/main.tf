@@ -49,6 +49,12 @@ locals {
   # same type, and an empty tuple never matches a two-element one.
   cross_account = length(var.source_account_ids) > 0 ? [1] : []
 
+  # Naming the source ROLE rather than the account root is the strongest available
+  # narrowing, and unlike a condition key it cannot be absent from a request.
+  # Defaults to the account root because that is what a caller can always supply;
+  # narrow it wherever the source role ARN is known.
+  cross_account_principals = length(var.source_principal_arns) > 0 ? var.source_principal_arns : local.source_account_arns
+
   # AWS Backup's service-principal name in kms:ViaService is Region-qualified.
   backup_via_service = "backup.${local.actual_region}.amazonaws.com"
 
@@ -97,7 +103,10 @@ locals {
           # on an absent context key evaluates false and would break the copy.
           Condition = {
             StringEqualsIfExists = {
-              "aws:SourceAccount" = concat([local.account_id], var.source_account_ids)
+              "aws:SourceAccount" = distinct(concat([local.account_id], var.source_account_ids))
+            }
+            ArnLikeIfExists = {
+              "aws:SourceArn" = "arn:${local.partition}:backup:*:*:*"
             }
           }
         },
@@ -126,13 +135,29 @@ locals {
         for _ in local.cross_account : {
           Sid       = "AllowSourceAccountsToCopyIn"
           Effect    = "Allow"
-          Principal = { AWS = local.source_account_arns }
+          Principal = { AWS = local.cross_account_principals }
           Action    = local.kms_data_plane_actions
           Resource  = "*"
           Condition = {
-            StringEquals = {
-              "kms:ViaService"    = local.backup_via_service
-              "kms:CallerAccount" = var.source_account_ids
+            # Two deliberate choices here, both about not breaking the copy.
+            #
+            # IfExists, because a plain StringEquals on a context key the caller
+            # does not populate evaluates to FALSE and denies the request. AWS
+            # Backup may authorise its copy-time KMS calls through a grant rather
+            # than through this statement, in which case kms:ViaService is absent
+            # -- and a fail-closed condition would deny the very operation this
+            # statement exists to permit, nightly, after a clean apply.
+            #
+            # A wildcard Region, because a cross-account destination may also be
+            # cross-Region. Pinning the destination Region would not match a call
+            # made from the source Region's endpoint.
+            #
+            # The real narrowing should come from source_principal_arns, which
+            # names the source ROLE and does not depend on any context key being
+            # present. kms:CallerAccount is omitted as redundant: Principal
+            # already restricts this to the declared source accounts.
+            StringLikeIfExists = {
+              "kms:ViaService" = "backup.*.amazonaws.com"
             }
           }
         }
@@ -141,14 +166,11 @@ locals {
         for _ in local.cross_account : {
           Sid       = "AllowSourceAccountsToGrantForAWSResources"
           Effect    = "Allow"
-          Principal = { AWS = local.source_account_arns }
+          Principal = { AWS = local.cross_account_principals }
           Action    = "kms:CreateGrant"
           Resource  = "*"
           Condition = {
             Bool = { "kms:GrantIsForAWSResource" = "true" }
-            StringEquals = {
-              "kms:CallerAccount" = var.source_account_ids
-            }
           }
         }
       ],
@@ -191,6 +213,28 @@ resource "aws_backup_vault" "this" {
     precondition {
       condition     = var.create_kms_key || var.kms_key_arn != null
       error_message = "A vault must be encrypted: set create_kms_key = true or supply kms_key_arn."
+    }
+
+    # force_destroy deletes the vault's recovery points before the vault, which
+    # needs backup:DeleteRecoveryPoint and backup:DeleteBackupVault -- both denied
+    # by the deny-delete policy to every principal not on the exemption list. The
+    # two settings silently conflict, and the symptom is an AccessDenied on destroy
+    # with nothing to say which of them caused it.
+    precondition {
+      condition = (
+        !var.force_destroy ||
+        !var.enable_deny_delete_policy ||
+        length(var.deny_delete_principals_except) > 0
+      )
+      error_message = <<-EOT
+        force_destroy is set on vault "${var.name}" while the deny-delete policy denies
+        deletion to every principal, so `terraform destroy` would fail with AccessDenied.
+
+        Either set enable_deny_delete_policy = false for this throwaway environment, or add
+        the Terraform execution role to deny_delete_principals_except.
+
+        Note that neither makes a committed COMPLIANCE lock destroyable. Nothing does.
+      EOT
     }
   }
 }

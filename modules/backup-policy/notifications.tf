@@ -42,15 +42,9 @@ locals {
         Resource  = "*"
       },
       {
-        Sid    = "AllowPublishingServicesToUseTheKey"
-        Effect = "Allow"
-        Principal = {
-          Service = [
-            "backup.amazonaws.com",
-            "events.amazonaws.com",
-            "cloudwatch.amazonaws.com",
-          ]
-        }
+        Sid       = "AllowPublishingServicesToUseTheKey"
+        Effect    = "Allow"
+        Principal = { Service = local.sns_publishing_services }
         Action = [
           "kms:Decrypt",
           "kms:GenerateDataKey",
@@ -134,21 +128,69 @@ resource "aws_backup_vault_notifications" "copy" {
 }
 
 locals {
+  sns_publishing_services = [
+    "backup.amazonaws.com",
+    "events.amazonaws.com",
+    "cloudwatch.amazonaws.com",
+  ]
+
   sns_topic_policy = {
     for r in local.managed_regions : r => jsonencode({
       Version = "2012-10-17"
-      Statement = [
-        for svc in ["backup.amazonaws.com", "events.amazonaws.com", "cloudwatch.amazonaws.com"] : {
-          Sid       = "Allow${replace(title(split(".", svc)[0]), "-", "")}Publish"
-          Effect    = "Allow"
-          Principal = { Service = svc }
-          Action    = "SNS:Publish"
-          Resource  = "arn:${local.partition}:sns:${r}:${local.account_id}:${var.name}-events"
-          Condition = {
-            StringEquals = { "aws:SourceAccount" = local.account_id }
+      Statement = concat(
+        [
+          # Replacing the topic policy removes SNS's auto-generated
+          # __default_statement_ID, which grants the topic owner SNS:*. Same-account
+          # access still works through IAM, but console and subscription management
+          # behave surprisingly without it, so it is restated rather than dropped.
+          {
+            Sid       = "AllowTopicOwner"
+            Effect    = "Allow"
+            Principal = { AWS = "arn:${local.partition}:iam::${local.account_id}:root" }
+            Action = [
+              "SNS:GetTopicAttributes",
+              "SNS:SetTopicAttributes",
+              "SNS:AddPermission",
+              "SNS:RemovePermission",
+              "SNS:DeleteTopic",
+              "SNS:Subscribe",
+              "SNS:ListSubscriptionsByTopic",
+              "SNS:Publish",
+            ]
+            Resource = "arn:${local.partition}:sns:${r}:${local.account_id}:${var.name}-events"
+          },
+        ],
+        [
+          for svc in local.sns_publishing_services : {
+            Sid       = "Allow${replace(title(split(".", svc)[0]), "-", "")}Publish"
+            Effect    = "Allow"
+            Principal = { Service = svc }
+            Action    = "SNS:Publish"
+            Resource  = "arn:${local.partition}:sns:${r}:${local.account_id}:${var.name}-events"
+            # IfExists, matching the KMS key policy that gates the same publish.
+            # A plain StringEquals on a context key a service does not populate
+            # evaluates FALSE and drops the message -- the same silent
+            # delivery failure this file's header comment is about. The two
+            # policies must agree, or the careful one is wasted.
+            Condition = {
+              StringEqualsIfExists = { "aws:SourceAccount" = local.account_id }
+            }
           }
-        }
-      ]
+        ],
+        [
+          # Restated from the pre-jsonencode version of this policy.
+          {
+            Sid       = "DenyInsecureTransport"
+            Effect    = "Deny"
+            Principal = { AWS = "*" }
+            Action    = "SNS:Publish"
+            Resource  = "arn:${local.partition}:sns:${r}:${local.account_id}:${var.name}-events"
+            Condition = {
+              Bool = { "aws:SecureTransport" = "false" }
+            }
+          },
+        ],
+      )
     })
   }
 }

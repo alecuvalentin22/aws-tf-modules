@@ -148,25 +148,66 @@ run "key_policy_lets_the_source_account_re_encrypt_the_copy" {
 # another account. Unconditional, it would give anyone with admin in the source
 # account the ability to read everything in the isolated vault -- which is the
 # exact failure the account boundary exists to prevent.
-run "the_cross_account_grant_is_scoped_to_aws_backup" {
+#
+# But the scoping must not fail CLOSED. AWS Backup may authorise its copy-time
+# KMS calls through a grant rather than through this statement, in which case
+# kms:ViaService is absent from the request -- and a plain StringEquals on an
+# absent context key evaluates FALSE, denying the very operation the statement
+# exists to permit. Silently, nightly, after a clean apply.
+#
+# So: IfExists, and a wildcard Region (a cross-account destination may also be
+# cross-Region, and pinning the destination Region would not match a call made
+# from the source Region's endpoint). The narrowing that does NOT depend on a
+# context key being present is naming the source role, below.
+run "the_cross_account_grant_is_scoped_to_aws_backup_without_failing_closed" {
   command = apply
 
   assert {
     condition = alltrue([
       for s in jsondecode(local.kms_policy).Statement :
       s.Sid != "AllowSourceAccountsToCopyIn" ||
-      try(s.Condition.StringEquals["kms:ViaService"], null) == "backup.eu-central-1.amazonaws.com"
+      try(s.Condition.StringLikeIfExists["kms:ViaService"], null) == "backup.*.amazonaws.com"
     ])
-    error_message = "The cross-account key grant must be usable only through AWS Backup, not directly."
+    error_message = "The cross-account key grant should be scoped to AWS Backup with an IfExists condition and a wildcard Region."
+  }
+
+  # The same rule the neighbouring service statement follows. Asserting one
+  # convention here and the opposite there is how a suite enshrines a
+  # contradiction.
+  assert {
+    condition = alltrue([
+      for s in jsondecode(local.kms_policy).Statement :
+      s.Sid != "AllowSourceAccountsToCopyIn" || try(s.Condition.StringEquals, null) == null
+    ])
+    error_message = "A plain StringEquals here would deny the copy whenever the context key is absent."
+  }
+}
+
+run "the_cross_account_grant_can_be_narrowed_to_the_source_role" {
+  command = apply
+
+  variables {
+    source_principal_arns = ["arn:aws:iam::111111111111:role/platform-backup-service-role"]
+  }
+
+  # Naming the role is the only narrowing here that cannot be defeated by an
+  # absent context key.
+  assert {
+    condition = alltrue([
+      for s in jsondecode(local.kms_policy).Statement :
+      !startswith(s.Sid, "AllowSourceAccounts") ||
+      contains(tolist(s.Principal.AWS), "arn:aws:iam::111111111111:role/platform-backup-service-role")
+    ])
+    error_message = "source_principal_arns should replace the account root as the cross-account principal."
   }
 
   assert {
     condition = alltrue([
       for s in jsondecode(local.kms_policy).Statement :
-      s.Sid != "AllowSourceAccountsToCopyIn" ||
-      contains(try(s.Condition.StringEquals["kms:CallerAccount"], []), "111111111111")
+      !startswith(s.Sid, "AllowSourceAccounts") ||
+      !contains(tolist(s.Principal.AWS), "arn:aws:iam::111111111111:root")
     ])
-    error_message = "The cross-account key grant must be pinned to the declared source accounts."
+    error_message = "Narrowing to a role should drop the account-root principal, not add to it."
   }
 }
 

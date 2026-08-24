@@ -61,7 +61,7 @@ resource "aws_backup_framework" "this" {
 
     input_parameter {
       name  = "requiredFrequencyValue"
-      value = tostring(local.longest_schedule_gap_days)
+      value = tostring(local.required_frequency_days)
     }
 
     input_parameter {
@@ -85,6 +85,11 @@ resource "aws_backup_framework" "this" {
     name = "BACKUP_RECOVERY_POINT_ENCRYPTED"
   }
 
+  # Scoped for the same reason as the coverage control above: unscoped, these
+  # evaluate every supported resource in the account, so any account holding
+  # resources deliberately not backed up produces a large standing volume of
+  # non-compliance that buries the real findings.
+  #
   # WORM. Both controls, because they check different things and the module's
   # whole thesis is that only the first of them is load-bearing:
   #   ..._BACKUP_VAULT_LOCK      evaluates Vault Lock itself
@@ -93,6 +98,14 @@ resource "aws_backup_framework" "this" {
   # Auditing only the second would be auditing the weaker control.
   control {
     name = "BACKUP_RESOURCES_PROTECTED_BY_BACKUP_VAULT_LOCK"
+
+    dynamic "scope" {
+      for_each = local.audit_scope_tag == null ? [] : [local.audit_scope_tag]
+
+      content {
+        tags = scope.value
+      }
+    }
   }
 
   control {
@@ -109,6 +122,14 @@ resource "aws_backup_framework" "this" {
     content {
       name = "BACKUP_RESOURCES_PROTECTED_BY_CROSS_REGION"
 
+      dynamic "scope" {
+        for_each = local.audit_scope_tag == null ? [] : [local.audit_scope_tag]
+
+        content {
+          tags = scope.value
+        }
+      }
+
       input_parameter {
         name  = "crossRegionList"
         value = join(",", local.copy_destination_regions)
@@ -122,6 +143,14 @@ resource "aws_backup_framework" "this" {
 
     content {
       name = "BACKUP_RESOURCES_PROTECTED_BY_CROSS_ACCOUNT"
+
+      dynamic "scope" {
+        for_each = local.audit_scope_tag == null ? [] : [local.audit_scope_tag]
+
+        content {
+          tags = scope.value
+        }
+      }
 
       input_parameter {
         name  = "crossAccountList"

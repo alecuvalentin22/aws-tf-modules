@@ -193,10 +193,16 @@ module "backup_policy" {
       copy_to = ["secondary_region", "backup_account"]
 
       # The cross-account copy is the compliance copy, so it keeps the full term
-      # in cold storage. The cross-Region copy is the operational one and can be
-      # shorter without weakening the retention guarantee.
+      # in cold storage. The cross-Region copy is the OPERATIONAL one -- shorter,
+      # and deliberately kept warm so a restore from it takes minutes rather than
+      # hours.
+      #
+      # disable_cold_storage is what makes that expressible. Without it the copy
+      # inherits the rule's 90-day transition, and the "operational" copy quietly
+      # becomes one that restores in hours -- which is the opposite of its purpose,
+      # and invisible in the plan.
       copy_retention = {
-        secondary_region = { delete_after = 365 }
+        secondary_region = { delete_after = 365, disable_cold_storage = true }
         backup_account   = { delete_after = 2555, cold_storage_after = 90 }
       }
     },

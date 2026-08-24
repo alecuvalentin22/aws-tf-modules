@@ -549,3 +549,185 @@ run "rejects_continuous_backup_with_copies_unless_acknowledged" {
 
   expect_failures = [var.rules]
 }
+
+# --------------------------------------------------------------------------
+# Regression tests for the second review pass.
+# --------------------------------------------------------------------------
+
+# The two acknowledgements used to share one flag. An ordinary sandbox -- one
+# copy Region with its lock deliberately off -- forced that flag on, and it then
+# waived the unrelated cross-account KMS requirement, silently re-opening the
+# gap that guard exists to close.
+run "an_unlocked_sandbox_region_does_not_require_an_acknowledgement" {
+  command = apply
+
+  variables {
+    copy_destinations = {
+      dev_region = {
+        region = "eu-west-1"
+        lock   = { enabled = false }
+      }
+    }
+
+    rules = [{
+      name      = "daily"
+      schedule  = "cron(0 2 * * ? *)"
+      retention = { delete_after = 35 }
+      copy_to   = ["dev_region"]
+    }]
+  }
+
+  # A lock the operator turned off is a stated intent, not an unknown.
+  assert {
+    condition     = length(local.unchecked_destinations) == 0
+    error_message = "A deliberately unlocked managed destination is not an undeclared window and must not consume an acknowledgement."
+  }
+
+  # But it is still reported, so the omission is visible.
+  assert {
+    condition     = contains(local.unvalidated_retention_targets, "dev_region (lock disabled)")
+    error_message = "An unlocked destination should still be named among the unvalidated targets."
+  }
+}
+
+run "the_kms_requirement_cannot_be_waived_by_the_lock_acknowledgement" {
+  command = plan
+
+  variables {
+    acknowledge_unchecked_copy_destinations = true
+
+    copy_destinations = {
+      backup_account = {
+        vault_arn               = "arn:aws:backup:eu-central-1:222222222222:backup-vault:platform-iso"
+        lock_min_retention_days = 7
+        lock_max_retention_days = 3650
+      }
+    }
+
+    rules = [{
+      name      = "daily"
+      schedule  = "cron(0 2 * * ? *)"
+      retention = { delete_after = 35 }
+      copy_to   = ["backup_account"]
+    }]
+  }
+
+  expect_failures = [aws_backup_plan.this]
+}
+
+# A disabled lock on the vault every backup job writes to FIRST used to be the
+# one omission that appeared nowhere at all, while the same state on a copy
+# destination was a hard error. That asymmetry is the reverse of the risk order.
+run "a_disabled_lock_on_the_primary_vault_is_reported" {
+  command = apply
+
+  variables {
+    primary_vault = {
+      lock = { enabled = false }
+    }
+
+    copy_destinations = {
+      secondary_region = {
+        region = "eu-west-1"
+        lock   = { enabled = false }
+      }
+    }
+
+    rules = [{
+      name      = "daily"
+      schedule  = "cron(0 2 * * ? *)"
+      retention = { delete_after = 1 }
+      copy_to   = ["secondary_region"]
+    }]
+  }
+
+  # With no lock anywhere there is nothing to validate against, so the plan
+  # applies -- which is correct, and exactly why the omission has to be visible.
+  assert {
+    condition     = length(local.primary_retention_violations) == 0
+    error_message = "With the primary lock disabled there is no window to check against."
+  }
+
+  assert {
+    condition     = contains(local.unvalidated_retention_targets, "primary vault (lock disabled)")
+    error_message = "An unvalidated primary vault must be reported, not silently skipped."
+  }
+
+  assert {
+    condition     = length(local.unvalidated_retention_targets) == 2
+    error_message = "Both the primary vault and the unlocked destination should be reported."
+  }
+}
+
+# Merging field by field made null mean "inherit", which left no way to say
+# "no cold tier on this hop" -- so a short warm operational copy of a rule that
+# tiers to cold became inexpressible, and silently inherited a transition that
+# makes restores take hours.
+run "a_copy_override_can_clear_the_cold_storage_transition" {
+  command = apply
+
+  variables {
+    copy_destinations = {
+      secondary_region = { region = "eu-west-1" }
+    }
+
+    rules = [{
+      name      = "monthly"
+      schedule  = "cron(0 4 1 * ? *)"
+      retention = { delete_after = 2555, cold_storage_after = 90 }
+      copy_to   = ["secondary_region"]
+
+      copy_retention = {
+        secondary_region = {
+          delete_after         = 120
+          disable_cold_storage = true
+        }
+      }
+    }]
+  }
+
+  assert {
+    condition     = local.copy_actions["monthly"][0].lifecycle_config.cold_storage_after == null
+    error_message = "disable_cold_storage should clear the inherited transition, leaving a warm copy."
+  }
+
+  assert {
+    condition     = local.copy_actions["monthly"][0].lifecycle_config.delete_after == 120
+    error_message = "A 120-day warm copy should be expressible; without the sentinel it fails the cold-storage validation."
+  }
+}
+
+# Fields that apply to one kind of destination are refused on the other rather
+# than silently ignored.
+run "rejects_an_external_only_field_on_a_managed_destination" {
+  command = plan
+
+  variables {
+    copy_destinations = {
+      secondary_region = {
+        region               = "eu-west-1"
+        kms_key_arn_external = "arn:aws:kms:eu-west-1:222222222222:key/44444444-4444-4444-4444-444444444444"
+      }
+    }
+  }
+
+  expect_failures = [var.copy_destinations]
+}
+
+run "rejects_a_managed_only_field_on_an_external_destination" {
+  command = plan
+
+  variables {
+    copy_destinations = {
+      backup_account = {
+        vault_arn               = "arn:aws:backup:eu-central-1:222222222222:backup-vault:platform-iso"
+        lock_min_retention_days = 7
+        lock_max_retention_days = 3650
+        kms_key_arn_external    = "arn:aws:kms:eu-central-1:222222222222:key/33333333-3333-3333-3333-333333333333"
+        create_kms_key          = true
+      }
+    }
+  }
+
+  expect_failures = [var.copy_destinations]
+}

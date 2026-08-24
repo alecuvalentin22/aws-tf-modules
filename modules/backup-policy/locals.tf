@@ -49,8 +49,6 @@ locals {
 
   # ---------------------------------------------------------------------------
   # Copy actions, flattened per rule so one dynamic block emits them all.
-  # A destination not named in copy_retention inherits the rule's own lifecycle.
-  # ---------------------------------------------------------------------------
   # Destinations that do not exist are filtered out here rather than indexed
   # into. Indexing would fail first, with Terraform's generic "Invalid index"
   # pointing at this file, instead of the plan precondition below naming the
@@ -78,9 +76,11 @@ locals {
             try(r.copy_retention[dest].delete_after, null),
             r.retention.delete_after,
           )
-          cold_storage_after = try(r.copy_retention[dest].cold_storage_after, null) != null ? (
-            r.copy_retention[dest].cold_storage_after
-          ) : r.retention.cold_storage_after
+          cold_storage_after = try(r.copy_retention[dest].disable_cold_storage, false) ? null : (
+            try(r.copy_retention[dest].cold_storage_after, null) != null
+            ? r.copy_retention[dest].cold_storage_after
+            : r.retention.cold_storage_after
+          )
           opt_in_to_archive_for_supported_resources = try(r.copy_retention[dest].opt_in_to_archive_for_supported_resources, null) != null ? (
             r.copy_retention[dest].opt_in_to_archive_for_supported_resources
           ) : r.retention.opt_in_to_archive_for_supported_resources
@@ -132,11 +132,48 @@ locals {
     },
   )
 
-  # Destinations whose retention could NOT be checked, so the omission is
-  # visible instead of silent. Surfaced as an output and, unless explicitly
-  # acknowledged, as a plan-time error.
-  unchecked_destinations = sort([
-    for k, w in local.destination_lock_windows : k if !w.enabled
+  # Two different things get conflated if you are not careful, and only one of
+  # them is a problem:
+  #
+  #   Deliberately not locked  -- lock.enabled = false on a vault this module can
+  #                               see. There is no window to check because the
+  #                               operator said so. A stated intent, not a gap.
+  #   Window not declared      -- an EXTERNAL destination whose Vault Lock lives in
+  #                               another account, which this module cannot read.
+  #                               Its retention is genuinely unvalidated.
+  #
+  # Only the second requires acknowledgement. Making the first require it too
+  # meant an ordinary sandbox -- one unlocked copy Region -- forced the
+  # acknowledgement flag on, and that flag then waived unrelated checks.
+  undeclared_external_windows = sort([
+    for k, d in local.external_destinations : k
+    if d.lock_min_retention_days == null && d.lock_max_retention_days == null
+  ])
+
+  # Everything whose retention was not validated, for whatever reason, so the
+  # omission is visible rather than silent. Reported even when acknowledged, and
+  # symmetric across the primary vault and the copy destinations -- the vault
+  # every job writes to first should not be the one checked least.
+  unvalidated_retention_targets = sort(concat(
+    local.primary_lock_window.enabled ? [] : ["primary vault (lock disabled)"],
+    [
+      for k, w in local.destination_lock_windows : "${k} (lock disabled)"
+      if !w.enabled && contains(keys(local.managed_destinations), k)
+    ],
+    [
+      for k in local.undeclared_external_windows : "${k} (external, lock window not declared)"
+    ],
+  ))
+
+  # Kept for the precondition and for the output's original name.
+  unchecked_destinations          = local.undeclared_external_windows
+  unchecked_copy_destinations_out = local.undeclared_external_windows
+
+  # External destinations whose KMS key ARN was not supplied. Only material when
+  # this module builds the backup role -- a caller supplying their own role owns
+  # its permissions.
+  external_destinations_missing_key = var.backup_role_arn != null ? [] : sort([
+    for k, d in local.external_destinations : k if d.kms_key_arn_external == null
   ])
 
   primary_retention_violations = [
@@ -236,15 +273,40 @@ locals {
     )
   }
 
+  # rate(N unit) is the other accepted form. Ignoring it and defaulting to 1 day
+  # reproduces exactly the false positive this derivation exists to remove: a
+  # fortnightly plan reported non-compliant against a daily requirement, forever.
+  rate_parts = {
+    for r in var.rules : r.name => (
+      startswith(r.schedule, "rate(")
+      ? split(" ", trimsuffix(trimprefix(r.schedule, "rate("), ")"))
+      : []
+    )
+  }
+
   rule_gap_days = [
     for r in var.rules : (
-      length(local.cron_fields[r.name]) < 5 ? 1 :
-      !contains(["*", "?"], local.cron_fields[r.name][2]) ? 31 :
-      !contains(["*", "?"], local.cron_fields[r.name][4]) ? 7 : 1
+      length(local.rate_parts[r.name]) == 2 ? (
+        # Sub-daily rates still mean "at least daily" for a control measured in
+        # whole days.
+        startswith(local.rate_parts[r.name][1], "day") ? tonumber(local.rate_parts[r.name][0]) : 1
+        ) : (
+        length(local.cron_fields[r.name]) < 5 ? 1 :
+        !contains(["*", "?"], local.cron_fields[r.name][2]) ? 31 :
+        !contains(["*", "?"], local.cron_fields[r.name][4]) ? 7 : 1
+      )
     )
   ]
 
-  longest_schedule_gap_days = max(local.rule_gap_days...)
+  # MIN, not max.
+  #
+  # BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK passes when a plan has at
+  # least one rule meeting the requirement. Parameterising it with the LEAST
+  # frequent tier (max) would let the plan pass on its monthly rule alone, so the
+  # control could not detect the daily tier being deleted. The tightest configured
+  # cadence is the assertion worth making: the plan still runs as often as it was
+  # written to.
+  required_frequency_days = min(local.rule_gap_days...)
 
   copy_destination_regions = distinct([
     for k, d in local.managed_destinations : coalesce(d.region, local.primary_region)

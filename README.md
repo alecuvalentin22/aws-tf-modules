@@ -57,10 +57,10 @@ resource. A test runs it with five destinations.
 ```bash
 cd modules/backup-policy
 terraform init
-terraform test      # 54 tests, mocked provider, no AWS account needed
+terraform test      # 63 tests, mocked provider, no AWS account needed
 
 cd modules/backup-vault
-terraform init && terraform test   # 19 more
+terraform init && terraform test   # 20 more
 ```
 
 All tests use `mock_provider`, so they need no credentials and run as a required CI
@@ -69,12 +69,16 @@ until apply (which would have failed the very first plan in a fresh account, and
 again), and an unknown copy destination crashing on a map index before the friendly
 precondition could produce its message. Neither is visible to `terraform validate`.
 
-The module was then put through an adversarial review by a second agent briefed to break
-it. That found three more silent failures — a vault policy that denied its own
+The module was then put through two rounds of adversarial review by a second agent briefed
+to break it. The first found three silent failures — a vault policy that denied its own
 replacement, restore-testing selections that matched nothing, and SNS topics encrypted
-with a key no AWS service can publish through — none of which fail at apply time. All
-are fixed, each with a regression test. [`docs/review.md`](docs/review.md) records what
-was found and what changed.
+with a key no AWS service can publish through — none of which fail at apply time. The
+second found that six of those fixes had introduced new defects, including one that
+silently re-opened the largest finding from the first round.
+
+All are fixed, each with a regression test. [`docs/review.md`](docs/review.md) records
+both rounds, what changed, and the questions that can only be settled against a live
+account.
 
 ---
 

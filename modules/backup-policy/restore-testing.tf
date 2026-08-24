@@ -70,11 +70,20 @@ resource "aws_backup_restore_testing_selection" "this" {
 
   region = each.value.region
 
-  name                      = replace("${var.name}_${lower(each.value.resource_type)}", "-", "_")
+  # Some protected resource types contain spaces ("SAP HANA on Amazon EC2"), and
+  # the API accepts only alphanumerics and underscores. Replacing hyphens alone
+  # leaves those rejected at apply time.
+  name                      = replace(lower("${var.name}_${each.value.resource_type}"), "/[^a-z0-9]+/", "_")
   restore_testing_plan_name = aws_backup_restore_testing_plan.this[each.value.region].name
   protected_resource_type   = each.value.resource_type
   iam_role_arn              = local.restore_testing_role_arn
 
+  # Note this is necessarily WIDER than the backup selection:
+  # protected_resource_conditions supports only string_equals/string_not_equals,
+  # so the Owner PATTERN (selection_required_tag_patterns) cannot be expressed
+  # here. Harmless -- a resource the plan never selected has no recovery points
+  # to restore -- but it is why the two conditions are not identical.
+  #
   # protected_resource_conditions filters the PROTECTED RESOURCE by its own
   # tags -- the source volume, instance or table -- not the recovery point. So
   # the tags used here must be the ones the selection matches on, which are on

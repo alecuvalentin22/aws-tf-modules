@@ -155,6 +155,10 @@ All AND-ed. The module deliberately does **not** use `selection_tag`, whose mult
 blocks are OR-ed — see [ADR-0002](../../docs/adr/0002-condition-not-selection-tag.md).
 An empty `selection_required_tags` is rejected.
 
+`selection_required_tag_patterns` defaults to `{ Owner = "*@*" }` rather than empty: the
+requirement is `ToBackup=true` **AND** an owner, and a default satisfying only half of it
+reproduces the gap this module exists to prevent.
+
 ---
 
 ## What it refuses to do
@@ -171,8 +175,11 @@ or destination, and every one has a test proving it fires.
 | `copy_to` naming an undefined destination | A typo would otherwise produce a plan with a missing copy |
 | `copy_retention` for a destination not in `copy_to` | Silently ignored otherwise |
 | An empty `selection_required_tags` | `resources = ["*"]` with no condition backs up the whole account |
-| An external destination with no declared lock window | Its retention cannot be checked; failing open silently on the cross-account hop defeats the guardrail |
-| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied |
+| An external destination with no declared lock window | Its retention cannot be checked; failing open silently on the cross-account hop defeats the guardrail. Waivable with `acknowledge_unchecked_copy_destinations`, and reported either way |
+| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied. **Not** waivable — it is a different failure from the one above, and sharing an escape hatch meant an unlocked sandbox Region silently switched this off |
+| A field that applies only to the other kind of destination | A setting that appears to take effect and does not is worse than one that is refused |
+| `disable_cold_storage` together with `cold_storage_after` | Contradictory |
+| `vault_force_destroy` with a deny-delete policy that exempts nobody | `destroy` would fail with AccessDenied and nothing would say which setting caused it |
 | `completion_window_minutes == start_window_minutes` | AWS requires it to be strictly greater |
 | Continuous backup with copies, unacknowledged | Copying continuous recovery points is only supported for some resource types |
 | A destination that is both `region` and `vault_arn`, or neither | Ambiguous |
@@ -228,11 +235,11 @@ undo it. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
 ## Testing
 
 ```bash
-cd modules/backup-policy && terraform init && terraform test                       # 54 tests
-cd modules/backup-policy/modules/backup-vault && terraform init && terraform test  # 19 tests
+cd modules/backup-policy && terraform init && terraform test                       # 63 tests
+cd modules/backup-policy/modules/backup-vault && terraform init && terraform test  # 20 tests
 ```
 
-All 73 run against a **mocked provider**: no AWS account, no credentials, so they work
+All 83 run against a **mocked provider**: no AWS account, no credentials, so they work
 as a required CI check. Shared mocks live in `tests/mocks/aws.tfmock.hcl`.
 
 | File | Covers |

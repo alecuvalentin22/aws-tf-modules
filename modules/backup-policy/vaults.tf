@@ -36,9 +36,9 @@ module "copy_vault" {
 
   name                                 = coalesce(each.value.name, "${var.name}-${each.key}")
   region                               = each.value.region
-  create_kms_key                       = each.value.create_kms_key
+  create_kms_key                       = coalesce(each.value.create_kms_key, true)
   kms_key_arn                          = each.value.kms_key_arn
-  kms_deletion_window_in_days          = each.value.kms_deletion_window_in_days
+  kms_deletion_window_in_days          = coalesce(each.value.kms_deletion_window_in_days, 30)
   lock                                 = each.value.lock
   confirm_irreversible_compliance_lock = var.confirm_irreversible_compliance_lock
 

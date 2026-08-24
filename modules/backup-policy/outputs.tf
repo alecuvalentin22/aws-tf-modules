@@ -64,13 +64,30 @@ output "restore_testing_plan_names" {
 
 output "unchecked_copy_destinations" {
   description = <<-EOT
-    Copy destinations whose Vault Lock retention window was not declared, and whose retention
-    therefore could NOT be validated at plan time.
+    External copy destinations whose Vault Lock retention window was not declared, and whose
+    retention therefore could not be validated at plan time.
 
-    Always empty unless `acknowledge_unchecked_copy_destinations` is true. Surfaced so the
-    gap in the module's headline guarantee is visible rather than silent.
+    Always empty unless `acknowledge_unchecked_copy_destinations` is true, because otherwise
+    the plan refuses. Surfaced so the gap in the module's headline guarantee stays visible.
   EOT
-  value       = local.unchecked_destinations
+  value       = local.unchecked_copy_destinations_out
+}
+
+output "unvalidated_retention_targets" {
+  description = <<-EOT
+    Everything whose retention this module did NOT validate, and why. Covers the primary
+    vault as well as the copy destinations: a disabled lock on the vault every backup job
+    writes to first should not be the one omission nobody sees.
+
+    Two distinct reasons appear here, and only the second is a gap rather than a choice:
+
+      "(lock disabled)"                     the operator turned the lock off, so there is no
+                                            window to check. A stated intent.
+      "(external, lock window not declared)" the Vault Lock lives in another account and this
+                                            module cannot read it. Genuinely unvalidated, and
+                                            refused at plan time unless acknowledged.
+  EOT
+  value       = local.unvalidated_retention_targets
 }
 
 output "audit_framework_arn" {

@@ -122,13 +122,13 @@ resource "aws_backup_plan" "this" {
     # DESTINATION key. The destination key policy granting `<source>:root` only
     # delegates to this account's IAM; it does not authorise anything by itself.
     # Without both halves the copy job fails with AccessDenied every night.
+    # Deliberately NOT waivable by acknowledge_unchecked_copy_destinations. They
+    # are unrelated failures, and sharing one flag meant an unlocked sandbox
+    # Region -- an ordinary, legitimate choice -- switched off this check too.
     precondition {
-      condition = alltrue([
-        for k, d in local.external_destinations :
-        d.kms_key_arn_external != null || var.acknowledge_unchecked_copy_destinations
-      ])
+      condition     = length(local.external_destinations_missing_key) == 0
       error_message = <<-EOT
-        External copy destination(s) have no kms_key_arn_external set.
+        External copy destination(s) have no kms_key_arn_external set: ${join(", ", local.external_destinations_missing_key)}.
 
         A cross-account copy of an encrypted resource re-encrypts with a key in the
         destination account. The destination key policy granting arn:aws:iam::<this account>:root

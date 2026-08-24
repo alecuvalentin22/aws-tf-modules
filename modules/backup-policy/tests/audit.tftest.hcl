@@ -65,7 +65,11 @@ run "worm_is_audited_on_the_lock_not_only_on_the_access_policy" {
 
 # Hardcoding a daily frequency reports a plan whose shortest tier is weekly as
 # permanently non-compliant.
-run "the_frequency_parameter_follows_the_least_frequent_rule" {
+# These assert on the rendered control parameter rather than on the local that
+# feeds it. Asserting the local proves the arithmetic and nothing about whether
+# the value reaches the framework -- swapping two locals inside audit.tf would
+# leave a locals-only assertion passing.
+run "a_weekly_only_plan_is_not_asked_to_run_daily" {
   command = apply
 
   variables {
@@ -77,8 +81,12 @@ run "the_frequency_parameter_follows_the_least_frequent_rule" {
   }
 
   assert {
-    condition     = local.longest_schedule_gap_days == 7
-    error_message = "A weekly cron (pinned day-of-week) should yield a 7-day frequency requirement, not 1."
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK" &&
+      anytrue([for p in c.input_parameter : p.name == "requiredFrequencyValue" && p.value == "7"])
+    ])
+    error_message = "A weekly cron (pinned day-of-week) should parameterise the control with 7 days, not 1."
   }
 }
 
@@ -94,17 +102,52 @@ run "a_monthly_only_plan_is_not_asked_to_run_daily" {
   }
 
   assert {
-    condition     = local.longest_schedule_gap_days == 31
-    error_message = "A monthly cron (pinned day-of-month) should yield a 31-day frequency requirement."
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK" &&
+      anytrue([for p in c.input_parameter : p.name == "requiredFrequencyValue" && p.value == "31"])
+    ])
+    error_message = "A monthly cron (pinned day-of-month) should parameterise the control with 31 days."
   }
 }
 
-run "a_daily_plan_still_requires_daily" {
+# rate() is an accepted schedule form. Treating it as daily reproduces exactly
+# the false positive this derivation exists to remove.
+run "a_rate_schedule_is_not_treated_as_daily" {
+  command = apply
+
+  variables {
+    rules = [{
+      name      = "fortnightly"
+      schedule  = "rate(14 days)"
+      retention = { delete_after = 90 }
+    }]
+  }
+
+  assert {
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK" &&
+      anytrue([for p in c.input_parameter : p.name == "requiredFrequencyValue" && p.value == "14"])
+    ])
+    error_message = "rate(14 days) should parameterise the control with 14 days; defaulting to 1 reports a fortnightly plan non-compliant forever."
+  }
+}
+
+# The control passes when a plan has AT LEAST ONE rule meeting the requirement,
+# so parameterising it with the LEAST frequent tier would let the plan pass on
+# its monthly rule alone -- and the control could then not detect the daily tier
+# being deleted. The tightest configured cadence is the assertion worth making.
+run "a_mixed_plan_is_held_to_its_tightest_cadence" {
   command = apply
 
   assert {
-    condition     = local.longest_schedule_gap_days == 31
-    error_message = "The default rule set includes a monthly tier, so the least frequent gap is 31 days."
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK" &&
+      anytrue([for p in c.input_parameter : p.name == "requiredFrequencyValue" && p.value == "1"])
+    ])
+    error_message = "With daily, weekly and monthly tiers the control should require daily, so deleting the daily tier is detectable."
   }
 }
 
@@ -112,7 +155,11 @@ run "the_retention_parameter_follows_the_shortest_tier" {
   command = apply
 
   assert {
-    condition     = local.shortest_retention_days == 35
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_RECOVERY_POINT_MINIMUM_RETENTION_CHECK" &&
+      anytrue([for p in c.input_parameter : p.name == "requiredRetentionDays" && p.value == "35"])
+    ])
     error_message = "The minimum-retention control should assert the shortest retention the plan actually keeps."
   }
 }
@@ -124,13 +171,21 @@ run "copy_controls_are_pinned_to_the_configured_destinations" {
   command = apply
 
   assert {
-    condition     = join(",", local.copy_destination_regions) == "eu-west-1"
-    error_message = "The cross-Region control should name the Regions this plan actually copies to."
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_RESOURCES_PROTECTED_BY_CROSS_REGION" &&
+      anytrue([for p in c.input_parameter : p.name == "crossRegionList" && p.value == "eu-west-1"])
+    ])
+    error_message = "The cross-Region control should name the Regions this plan actually copies to; unparameterised, it passes for a copy to any Region."
   }
 
   assert {
-    condition     = join(",", local.external_destination_account_ids) == "222222222222"
-    error_message = "The cross-account control should name the destination account, parsed from its vault ARN."
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_RESOURCES_PROTECTED_BY_CROSS_ACCOUNT" &&
+      anytrue([for p in c.input_parameter : p.name == "crossAccountList" && p.value == "222222222222"])
+    ])
+    error_message = "The cross-account control should name the destination account, parsed out of its vault ARN."
   }
 }
 
@@ -141,7 +196,11 @@ run "the_scope_tag_is_derived_when_unambiguous" {
   command = apply
 
   assert {
-    condition     = jsonencode(local.audit_scope_tag) == jsonencode({ ToBackup = "true" })
+    condition = anytrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name == "BACKUP_RESOURCES_PROTECTED_BY_BACKUP_PLAN" &&
+      anytrue([for sc in c.scope : jsonencode(sc.tags) == jsonencode({ ToBackup = "true" })])
+    ])
     error_message = "A single required tag should become the framework's scope."
   }
 }
@@ -158,7 +217,10 @@ run "the_scope_is_omitted_when_more_than_one_tag_is_required" {
   }
 
   assert {
-    condition     = local.audit_scope_tag == null
+    condition = alltrue([
+      for c in aws_backup_framework.this[0].control :
+      c.name != "BACKUP_RESOURCES_PROTECTED_BY_BACKUP_PLAN" || length(c.scope) == 0
+    ])
     error_message = "With more than one required tag there is no correct single-tag scope, so it must be omitted rather than truncated."
   }
 }

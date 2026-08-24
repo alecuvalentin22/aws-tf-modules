@@ -100,7 +100,9 @@ version of this bug that is hardest to spot, because the plan appears to be work
 
 For an external (cross-account) destination the module cannot read the lock, so the
 caller declares it via `lock_min_retention_days` / `lock_max_retention_days`. Omitting
-them skips the check rather than guessing.
+both is an **error** rather than a silent skip — failing open with no signal on the least
+observable hop defeats the point of the guardrail. `unvalidated_retention_targets` names
+anything that went unchecked, including a deliberately unlocked primary vault.
 
 Six tests in `tests/guardrails.tftest.hcl` cover this, including the accept case.
 
@@ -134,8 +136,16 @@ proves the recovery points still exist; cross-account copy proves they exist som
 else; only a restore proves they are usable. It is also what turns an RTO from a design
 claim into a measured number.
 
-The testing plan covers the copy destinations too, not only the primary vault — a copy
-nobody has ever restored from is an assumption, not a second line of defence.
+The testing plan covers the in-account copy destinations too, not only the primary vault
+— a copy nobody has ever restored from is an assumption, not a second line of defence.
+One plan per Region, because restore testing is regional and a plan cannot select a vault
+in another Region.
+
+The **cross-account** copy is the exception, and the reason is structural rather than an
+oversight: it lives in an account this module has no credentials for. Testing it means
+running a restore testing plan in the backup account, as part of that account's own
+deployment. That is called out in the runbook because it is the copy you would reach for
+during a ransomware incident — the worst one to be restoring from for the first time.
 
 ---
 
@@ -226,7 +236,7 @@ require it.
 
 ## Testing
 
-73 tests across the two modules, all against a **mocked provider** — no AWS account,
+83 tests across the two modules, all against a **mocked provider** — no AWS account,
 no credentials, so they run as a required check in CI:
 
 | File | Covers |
@@ -276,8 +286,14 @@ cross-account copy, a `__primary__` sentinel key collision that let the headline
 retention guardrail fail open, and a `copy_retention` override that silently dropped
 `cold_storage_after` — turning a seven-year copy into warm storage.
 
-All are fixed, each with a regression test. [`review.md`](review.md) records the full
-finding list and the response to each.
+A second pass on the revised module found no blockers but showed that six of those fixes
+had introduced new defects — including one acknowledgement flag that gated two unrelated
+guards, so an unlocked sandbox Region silently waived the cross-account KMS requirement
+and re-opened the largest finding from the first round.
+
+All are fixed, each with a regression test. [`review.md`](review.md) records both rounds,
+the response to each finding, and the questions that can only be settled against a live
+AWS account.
 
 ---
 

@@ -125,11 +125,15 @@ run "key_permissions_are_scoped_to_the_vault_keys" {
   command = apply
 
   # A wildcard here would let the backup role decrypt every key in the account.
+  #
+  # Resource is a list on some statements and a string on others, so a bare
+  # `!= "*"` is vacuously true for the list ones. Normalising with flatten()
+  # makes the assertion cover every statement rather than only the string case.
   assert {
-    condition = alltrue([
+    condition = alltrue(flatten([
       for s in jsondecode(local.backup_copy_policy).Statement :
-      !contains(keys(s), "Resource") || s.Resource != "*"
-    ])
+      [for r in flatten([s.Resource]) : r != "*"]
+    ]))
     error_message = "No statement should grant on all resources; the role's KMS access is scoped to the vault keys."
   }
 }
@@ -156,6 +160,34 @@ run "topics_are_not_encrypted_with_the_aws_managed_key" {
   }
 }
 
+run "the_topic_policy_denies_plaintext_publishes" {
+  command = apply
+
+  assert {
+    condition = anytrue([
+      for s in jsondecode(local.sns_topic_policy["eu-central-1"]).Statement :
+      s.Effect == "Deny" && try(s.Condition.Bool["aws:SecureTransport"], null) == "false"
+    ])
+    error_message = "The topic should refuse publishes over plaintext HTTP."
+  }
+}
+
+run "the_topic_policy_keeps_the_owner_grant_sns_would_otherwise_provide" {
+  command = apply
+
+  # Replacing the topic policy removes SNS's auto-generated
+  # __default_statement_ID. Same-account access survives through IAM, but
+  # console and subscription management behave surprisingly without it.
+  assert {
+    condition = anytrue([
+      for s in jsondecode(local.sns_topic_policy["eu-central-1"]).Statement :
+      s.Sid == "AllowTopicOwner" &&
+      try(s.Principal.AWS, null) == "arn:aws:iam::111111111111:root"
+    ])
+    error_message = "The topic owner grant should be restated, not dropped, when the default policy is replaced."
+  }
+}
+
 run "the_sns_key_policy_grants_every_publishing_service" {
   command = apply
 
@@ -174,12 +206,24 @@ run "the_sns_key_policy_grants_every_publishing_service" {
 run "the_topic_policy_grants_every_publishing_service" {
   command = apply
 
+  # The topic policy and the key policy gate the same publish, so they have to
+  # agree about whether an absent aws:SourceAccount denies it. A plain
+  # StringEquals on the topic while the key uses IfExists means the carefully
+  # written half is wasted and the message is dropped anyway.
+  assert {
+    condition = alltrue([
+      for s in jsondecode(local.sns_topic_policy["eu-central-1"]).Statement :
+      try(s.Principal.Service, null) == null || try(s.Condition.StringEquals, null) == null
+    ])
+    error_message = "The topic policy's service conditions must use IfExists, matching the KMS key policy that gates the same publish."
+  }
+
   assert {
     condition = alltrue([
       for svc in ["backup.amazonaws.com", "events.amazonaws.com", "cloudwatch.amazonaws.com"] :
       anytrue([
         for s in jsondecode(local.sns_topic_policy["eu-central-1"]).Statement :
-        s.Principal.Service == svc && s.Action == "SNS:Publish"
+        try(s.Principal.Service, null) == svc && s.Action == "SNS:Publish"
       ])
     ])
     error_message = "Each publishing service needs SNS:Publish on the topic as well as KMS on its key."
