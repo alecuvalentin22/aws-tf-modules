@@ -59,7 +59,7 @@ mock_resource "aws_sns_topic" {
 # real ARN or "*"), so this has to be a well-formed value rather than a
 # generated one. The consequence is that all mocked vaults share an ARN, so
 # tests assert on the module's own lists rather than on set-typed attributes
-# where identical values would silently collapse.
+# where identical values would collapse into one.
 mock_resource "aws_backup_vault" {
   defaults = {
     arn = "arn:aws:backup:eu-central-1:111111111111:backup-vault:mock-vault"

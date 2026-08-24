@@ -60,7 +60,7 @@ run "one_sns_topic_per_region_not_one_per_plan" {
   command = apply
 
   # Vault notifications cannot cross a Region. A single topic in the primary
-  # Region would silently drop everything the other four vaults emit.
+  # Region would drop everything the other four vaults emit.
   assert {
     condition     = length(local.managed_regions) == 5
     error_message = "The primary Region plus four copy Regions should each get a topic."

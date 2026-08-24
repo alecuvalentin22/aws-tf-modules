@@ -239,25 +239,14 @@ require it.
 83 tests across the two modules, all against a **mocked provider** - no AWS account,
 no credentials, so they run as a required check in CI:
 
-| File | Covers |
-| --- | --- |
-| `tests/defaults.tftest.hcl` | Shipped behaviour: three tiers, copy topology, AND-semantics selection, one key per vault, per-Region restore testing, alarm `treat_missing_data` |
-| `tests/guardrails.tftest.hcl` | Every configuration the module refuses, including all Vault Lock window cases, the accept case, and regressions for the review findings below |
-| `tests/policies.tftest.hcl` | The rendered trust, copy/encrypt, SNS key and topic policies - the full cross-account permission path |
-| `tests/audit.tftest.hcl` | Framework controls, and that its parameters follow the configuration rather than constants |
-| `tests/scaling.tftest.hcl` | Five destinations across five Regions plus one cross-account target |
-| `modules/backup-vault/tests/lock.tftest.hcl` | Lock modes and the compliance-mode acknowledgement guard |
-| `modules/backup-vault/tests/policies.tftest.hcl` | The rendered vault and KMS key policies, including the scoping of the cross-account grant |
+The breakdown by file is in the module README. The guardrail suite is the one worth
+reading: each of its cases was written by feeding the module a configuration AWS would
+accept and then choke on nightly.
 
-The guardrail tests are the ones that matter. Each was written by feeding the module a
-configuration AWS would accept and then choke on nightly.
-
-**Policies are built with `jsonencode` rather than `aws_iam_policy_document`
-specifically so they can be tested.** A mocked provider cannot compute a data source, so
-a policy built that way renders as an empty placeholder and every statement in it goes
-untested. Including the four grants that decide whether a cross-account copy works. The
-trade-off is losing the data source's ergonomics; the gain is that the security-carrying
-part of the module is the part under test.
+Policies are built with `jsonencode` rather than `aws_iam_policy_document` so that they
+can be tested at all. A mocked provider cannot compute a data source, so a policy built
+that way renders as an empty placeholder and nothing in it is checked, including the four
+grants that decide whether a cross-account copy works.
 
 Two tests caught real bugs during development:
 

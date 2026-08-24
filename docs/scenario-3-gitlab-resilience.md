@@ -57,29 +57,26 @@ cheapest one.
 - No cross-region copy - a regional event is unrecoverable.
 - **No evidence a restore has ever been tested.**
 - And the specific trap: **`gitlab-secrets.json` is routinely excluded from
-  `gitlab-backup`**. Without it, a restored database is useless, 2FA secrets, CI/CD
+  `gitlab-backup`**. Without it a restored database is useless: 2FA secrets, CI/CD
   variables, runner tokens and integration credentials are all encrypted with keys
-  held in that file. Teams discover this during their first real restore.
+  held in that file. Teams find this out during their first real restore.
 
 ### High
 
-**4. Redis has no HA.** It holds sessions and the Sidekiq queues. Losing it logs
-everyone out and drops queued background jobs.
+Redis has no HA. It holds sessions and the Sidekiq queues, so losing it logs everyone
+out and drops queued background jobs. Disk-full is the most common cause of a
+self-managed GitLab outage, and everything grows on the same volumes: repos, artifacts,
+LFS, container images, logs, Docker layers. EC2 publishes no disk metric by default, so
+nobody sees it coming (see Q3).
 
-**5. Disk-full is the most common cause of a self-managed GitLab outage.** Repos,
-artifacts, LFS, container images, logs and Docker layers all grow on the same volumes,
-and EC2 does not publish disk metrics by default (see Q3).
+Upgrades are their own problem. GitLab cannot jump arbitrary versions, so the path has
+mandatory intermediate stops with background migrations that must drain between hops.
+On a single instance every hop is an outage and a failed hop has no rollback.
 
-**6. Upgrades require walking required version stops.** GitLab cannot jump arbitrary
-versions; the upgrade path has mandatory intermediate versions with background
-migrations that must complete between hops. On a single instance every hop is an
-outage, and a failed hop has no rollback.
-
-**7. Monitoring runs on the instance it monitors.** When the box dies, the monitoring
-dies with it, so the alert that matters most is the one guaranteed not to fire.
-
-**8. Configuration is not reproducible.** A hand-configured Omnibus instance cannot be
-rebuilt identically under pressure.
+Two smaller ones. Monitoring runs on the instance it monitors, so when the box dies the
+alert that matters most is the one guaranteed not to fire. And a hand-configured Omnibus
+instance cannot be rebuilt identically under pressure, which is what recovery actually
+requires.
 
 ---
 
@@ -357,8 +354,8 @@ at once:
 
 1. It rehearses the upgrade path on real data before it runs in production.
 2. It **is** the restore test that nobody currently performs (Q1.3).
-3. It continuously validates that the backup. Including `gitlab-secrets.json` - is
-   actually restorable, rather than merely present.
+3. It proves the backup, `gitlab-secrets.json` included, is actually restorable rather
+   than merely present.
 
 A restore procedure that has not run in the last week is a procedure of unknown
 status.

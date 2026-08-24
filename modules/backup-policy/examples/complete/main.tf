@@ -66,7 +66,7 @@ module "backup_account_vault" {
   region = var.primary_region
 
   # Both the vault policy and the key policy grant this account. Granting only
-  # one of them is the usual reason a cross-account copy silently never arrives.
+  # one of them is the usual reason a cross-account copy never arrives.
   source_account_ids = [data.aws_caller_identity.prod.account_id]
 
   lock = {
@@ -78,8 +78,8 @@ module "backup_account_vault" {
 
   confirm_irreversible_compliance_lock = var.confirm_irreversible_compliance_lock
 
-  # The break-glass role is exempt from the deny-delete policy. It is NOT exempt
-  # from Vault Lock, nothing is, which is the point.
+  # The break-glass role is exempt from the deny-delete policy. Nothing is exempt
+  # from Vault Lock.
   deny_delete_principals_except = var.break_glass_role_arns
 
   tags = var.tags
@@ -162,7 +162,7 @@ module "backup_policy" {
       # hours.
       #
       # disable_cold_storage is what makes that expressible. Without it the copy
-      # inherits the rule's 90-day transition, and the "operational" copy quietly
+      # inherits the rule's 90-day transition, and the "operational" copy
       # becomes one that restores in hours, which is the opposite of its purpose,
       # and invisible in the plan.
       copy_retention = {

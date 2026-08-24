@@ -57,7 +57,7 @@ locals {
   # Behavior ordering.
   #
   # CloudFront evaluates ordered cache behaviors first-match-wins. A general
-  # pattern placed above a specific one silently shadows it, and the result is a
+  # pattern placed above a specific one shadows it, and the result is a
   # route that never receives traffic, or worse, a permissive behavior applying
   # where a restrictive one was intended. Neither is visible in a plan diff.
   #

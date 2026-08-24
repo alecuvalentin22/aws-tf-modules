@@ -11,7 +11,7 @@ locals {
         #
         # IfExists, not the plain operators. A StringEquals on a context key that
         # the caller does not populate evaluates to FALSE, which would make the
-        # role unassumable and stop every backup job in the account, silently,
+        # role unassumable and stop every backup job in the account,
         # since nothing fails at apply time. AWS's own generated service role
         # carries no conditions at all; IfExists keeps the protection where the
         # keys are present without betting the whole plan on them always being so.

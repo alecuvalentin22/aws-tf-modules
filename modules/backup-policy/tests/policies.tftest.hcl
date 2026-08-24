@@ -56,7 +56,7 @@ run "trust_policy_conditions_do_not_fail_closed_on_an_absent_key" {
       for s in jsondecode(local.backup_assume_role_policy).Statement :
       try(s.Condition.StringEquals, null) == null && try(s.Condition.ArnLike, null) == null
     ])
-    error_message = "Use StringEqualsIfExists/ArnLikeIfExists: a plain condition on an absent context key makes the role unassumable and silently stops every backup job."
+    error_message = "Use StringEqualsIfExists/ArnLikeIfExists: a plain condition on an absent context key makes the role unassumable and stops every backup job in the account."
   }
 
   assert {
@@ -156,7 +156,7 @@ run "topics_are_not_encrypted_with_the_aws_managed_key" {
     condition = alltrue([
       for k, t in aws_sns_topic.backup : t.kms_master_key_id != "alias/aws/sns"
     ])
-    error_message = "alias/aws/sns cannot be published to by AWS service principals; every notification would fail silently at delivery time."
+    error_message = "alias/aws/sns cannot be published to by AWS service principals; every notification would fail at delivery time, with nothing to show for it."
   }
 }
 

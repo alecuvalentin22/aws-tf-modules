@@ -29,7 +29,7 @@ skips every control bought at the edge:
 - CloudFront's own rate limiting and caching
 
 The diagram in the brief shows exactly this path, with an "Attacker" arrow going
-straight to the regional endpoint. It is not hypothetical.
+straight to the regional endpoint.
 
 The consequence is worth stating plainly: **the real security posture of the platform
 is whatever the regional WAF enforces, not what the edge enforces.** Everything else
@@ -139,8 +139,8 @@ Two changes, and the second is what makes the first cheap:
                          Lambda / internal ALB -> ECS
 ```
 
-**The same hostname, resolved differently depending on where you are.** That is the
-whole trick.
+Same hostname, different answer depending on which resolver the caller hits. Internal
+consumers never learn that anything moved.
 
 ### Why this is the low-impact option
 
@@ -174,7 +174,7 @@ categorically stronger guarantee than any mitigation in Q4.
 
 ### The cheaper stepping stone, and its cost
 
-Publishing the same OpenAPI definition twice, once `PRIVATE`, once `REGIONAL` - is
+Publishing the same OpenAPI definition twice, once `PRIVATE` and once `REGIONAL`, is
 less work and lets internal traffic go private immediately. But the regional endpoint
 stays public, so **every bypass mitigation in Q4 remains mandatory**, and the estate
 now has two deployments to keep in sync. Worth it as a transitional step for a
@@ -297,7 +297,7 @@ It holds exactly as long as the secret does, so:
 - **Rotate it with the documented overlap procedure**: add the new value to the WAF
   allow-list, update the CloudFront origin header, wait for the distribution to fully
   deploy, then remove the old value. Rotating without the overlap causes a full
-  outage, this is the step that gets skipped.
+  outage. This is the step that gets skipped.
 - Alarm on blocked requests at the regional WAF: a sustained non-zero rate is either
   an attacker probing or a rotation that half-completed.
 
@@ -331,4 +331,4 @@ Assume a bypass will eventually work and make it visible:
 | 4 | Bypass detection and alarming | Detective, not preventive | Low |
 
 The honest recommendation: ship Tiers 2-4 within weeks because they are cheap, and
-treat them as scaffolding with an explicit removal date. Tier 1 is the answer.
+treat them as scaffolding with a removal date on it.

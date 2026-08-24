@@ -202,8 +202,8 @@ confirm_irreversible_compliance_lock = true
 Do this only after a full backup -> copy -> **restore** cycle has been proven in
 governance mode. Once the grace period elapses: retention cannot be shortened, recovery
 points cannot be deleted early, `terraform destroy` fails while the vault holds
-recovery points, and no principal. Including the account root and AWS Support, can
-undo it. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
+recovery points, and no principal can undo it, including the account root and AWS
+Support. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
 
 ---
 

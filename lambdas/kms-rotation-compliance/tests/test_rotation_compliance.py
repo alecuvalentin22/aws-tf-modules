@@ -53,7 +53,7 @@ class ExtractKeyReference(unittest.TestCase):
     """Each resource type stores its key in a different place in the Config item.
 
     A wrong path yields "not encrypted" rather than an error, so every supported type
-    needs a test or the rule silently reports the wrong thing for that type.
+    needs a test or the rule reports the wrong thing for that type.
     """
 
     def test_rds_instance(self):

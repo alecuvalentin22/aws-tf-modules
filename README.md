@@ -28,8 +28,8 @@ If you have five minutes, read **[`docs/scenario-4-backup-policy.md`](docs/scena
 [`modules/backup-policy/locals.tf`](modules/backup-policy/locals.tf), where the correctness
 logic lives.
 
-If you have twenty, read the module itself. `variables.tf` carries the reasoning for each
-input, and the preconditions in `plan.tf` are where the interesting decisions ended up.
+If you have twenty, read `plan.tf` and `variables.tf`. The preconditions are where the
+arguments are.
 
 ---
 
@@ -62,7 +62,7 @@ AWS constraints get the same treatment.
 **Selection uses `condition`, not `selection_tag`.**
 AWS Backup evaluates multiple `selection_tag` blocks with OR, so `ToBackup=true` **AND**
 `Owner=<owner>` written that way accepts resources with no owner at all. It is invisible
-in a plan diff and fails in the direction that breaks nothing, you back up more than
+in a plan diff and fails in the direction that breaks nothing: you back up more than
 intended, so no job fails and nobody notices until an audit.
 [ADR-0002](docs/adr/0002-condition-not-selection-tag.md)
 
@@ -70,8 +70,8 @@ intended, so no job fails and nobody notices until an audit.
 Terraform cannot iterate over provider configurations, which is why modules like this are
 usually hard-wired to a fixed set of locations, with the KMS key, the lock and the vault
 policy copy-pasted per location. Using the AWS provider v6 per-resource `region` argument,
-copy destinations are a map, adding a Region is an entry, not a provider alias and a copy
-of every resource. A test runs the module with five destinations across five Regions.
+copy destinations are a map. Adding a Region is an entry, not a provider alias and a
+copy of every resource. A test runs the module with five destinations across five Regions.
 [ADR-0004](docs/adr/0004-module-composition-and-account-boundaries.md)
 
 ---

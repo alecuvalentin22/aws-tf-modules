@@ -43,7 +43,7 @@ variable "owner_tag_pattern" {
 }
 
 variable "break_glass_role_arns" {
-  description = "Roles exempt from the deny-delete vault policy. Not exempt from Vault Lock, nothing is."
+  description = "Roles exempt from the deny-delete vault policy. Nothing is exempt from Vault Lock."
   type        = list(string)
   default     = []
 }

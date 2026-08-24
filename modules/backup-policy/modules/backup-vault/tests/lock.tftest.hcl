@@ -1,9 +1,3 @@
-# Vault Lock behaviour.
-#
-# Vault Lock is the only control in this design that cannot be undone, so the
-# module's job is to make the irreversible case hard to reach by accident and
-# the reversible case the default.
-
 mock_provider "aws" {
   source = "./tests/mocks"
 }

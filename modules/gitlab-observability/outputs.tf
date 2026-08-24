@@ -36,7 +36,7 @@ output "coverage_gaps" {
   value = compact([
     var.cloudwatch_agent_installed ? "" : "disk and memory: the CloudWatch agent is not installed, and EC2 publishes neither on its own. Disk-full is the most common cause of a self-managed GitLab outage.",
     var.enable_sidekiq_alarms ? "" : "Sidekiq queue latency: the earliest predictive signal available, typically 10-30 minutes ahead of user-visible impact.",
-    var.backup_bucket_name == null ? "backup freshness: nothing detects a backup job that silently stopped producing." : "",
+    var.backup_bucket_name == null ? "backup freshness: nothing detects a backup job that has stopped producing." : "",
     length(var.canaries) == 0 ? "synthetic canaries: no check proves a developer can actually clone. Host metrics only show the box is alive." : "",
   ])
 }

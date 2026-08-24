@@ -1,10 +1,8 @@
-# The failure modes this module exists to prevent.
+# Configs CloudFront and API Gateway accept and then misbehave on: a 403 on
+# every request, a route that never receives traffic, or one caller getting
+# another caller's response. None of them fails at apply time.
 #
-# Every one of these is a configuration AWS accepts and then behaves badly on:
-# a 403 on every request, a route that silently never receives traffic, or one
-# caller receiving another caller's response. None fails at apply time.
-#
-# Runs against a mocked provider, so no AWS account or credentials are needed.
+# Mocked provider, so no AWS account needed.
 
 mock_provider "aws" {
   source = "./tests/mocks"

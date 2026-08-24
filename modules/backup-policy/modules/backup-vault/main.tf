@@ -124,7 +124,7 @@ locals {
       # Cross-account copy: the SOURCE account's backup role calls KMS in THIS
       # account to write the copy. Without this the copy job fails with
       # AccessDenied on the destination key, the single most common reason a
-      # cross-account copy silently never lands.
+      # cross-account copy never lands.
       #
       # Scoped hard. Granting an external account unconditional data-plane
       # access to this key would hand an attacker holding admin in the source
@@ -217,7 +217,7 @@ resource "aws_backup_vault" "this" {
     # force_destroy deletes the vault's recovery points before the vault, which
     # needs backup:DeleteRecoveryPoint and backup:DeleteBackupVault, both denied
     # by the deny-delete policy to every principal not on the exemption list. The
-    # two settings silently conflict, and the symptom is an AccessDenied on destroy
+    # two settings conflict, and the symptom is an AccessDenied on destroy
     # with nothing to say which of them caused it.
     precondition {
       condition = (

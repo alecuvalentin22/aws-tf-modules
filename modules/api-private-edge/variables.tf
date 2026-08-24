@@ -134,7 +134,7 @@ variable "path_routes" {
   description = <<-EOT
     Path-based routing, as an ordered list. The FIRST match wins, so ordering is
     security configuration rather than cosmetics: a permissive pattern placed above a
-    restrictive one silently wins, and nothing in the console warns about it.
+    restrictive one takes precedence, and nothing in the console warns about it.
 
     The module refuses an ordering where a general pattern precedes a more specific one
     that it would shadow, because that mistake is invisible in a plan diff.

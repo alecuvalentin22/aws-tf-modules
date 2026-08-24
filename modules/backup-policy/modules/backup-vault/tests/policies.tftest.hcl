@@ -3,8 +3,7 @@
 # These are built with jsonencode rather than aws_iam_policy_document precisely
 # so that this file can exist: a mocked provider cannot compute a data source,
 # so a policy built that way renders as an empty placeholder and every statement
-# in it goes untested. These policies are what actually permit, or silently
-# block, a cross-account copy, and none of it is legible in a plan diff.
+# in it goes untested. These policies are what permits or blocks a cross-account copy, and none of it is legible in a plan diff.
 
 mock_provider "aws" {
   source = "./tests/mocks"
@@ -242,7 +241,7 @@ run "backup_service_conditions_use_ifexists" {
   # A plain StringEquals on a context key the caller does not populate evaluates
   # FALSE and denies the request. On the service statement that would break
   # copies; on the assume-role trust policy in the parent module it would stop
-  # every backup job in the account, silently.
+  # every backup job in the account.
   assert {
     condition = alltrue([
       for s in jsondecode(local.kms_policy).Statement :

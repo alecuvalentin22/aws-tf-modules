@@ -15,7 +15,7 @@ plan that cannot be executed.
 ## The constraint that decides everything
 
 The keys have `Origin = EXTERNAL`. AWS KMS does not support automatic rotation for
-imported key material, there is no flag to enable. Rotation of a BYOK key means:
+imported key material. There is no flag to enable. Rotation of a BYOK key means:
 generate new material on the HSM, wrap it, import it, then call `RotateKeyOnDemand`.
 Every cycle, for every key.
 
@@ -230,9 +230,9 @@ material for every key in the estate.
 
 ## Q3 - Monitoring compliance with an AWS managed service
 
-**The requirement is subtler than it first appears.** The ask is to identify, at any
-time, *resources* - a specific S3 bucket, RDS instance or DynamoDB table, that are
-not compliant. Not keys. Resources.
+The requirement is subtler than it first appears. The ask is to identify, at any time,
+the *resources* that are not compliant: a specific S3 bucket, RDS instance or DynamoDB
+table. Not keys.
 
 That distinction rules out the obvious answer.
 
@@ -364,7 +364,7 @@ Worth calling out as the strongest single control available:
 
 This means that even a fully compromised import role cannot quietly downgrade the
 wrapping algorithm. The control is enforced by KMS rather than by the correctness of
-the automation, which is the right place for it, the automation is the thing most
+the automation, which is the right place for it. The automation is the thing most
 likely to be compromised.
 
 ### What to reject

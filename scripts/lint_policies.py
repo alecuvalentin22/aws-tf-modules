@@ -17,7 +17,7 @@ catalogue.
 A linter that reports "clean" is worthless unless you know it can report
 anything else. So before looking at the real policies, this script runs three
 deliberately broken fixtures through the same code path and FAILS if any of
-them comes back clean. A dependency change that silently defanged the linter
+them comes back clean. A dependency change that defanged the linter
 would otherwise turn this into a green check that verifies nothing.
 
 parliament is built for identity policies. Two of its findings are correct
@@ -60,7 +60,7 @@ SUPPRESSED = {
 # The module reads its account, partition and Region from data sources, which
 # need credentials. A throwaway copy substitutes literals so the plan runs
 # offline. Every substitution is asserted: if the module changes shape, this
-# script fails loudly instead of quietly linting nothing.
+# script fails loudly instead of linting nothing.
 SUBSTITUTIONS = {
     "locals.tf": [
         ('data "aws_caller_identity" "current" {}', ""),

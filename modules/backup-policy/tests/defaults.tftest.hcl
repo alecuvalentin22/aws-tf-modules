@@ -1,11 +1,3 @@
-# Behaviour of the module as shipped.
-#
-# Every run uses a mocked provider, so `terraform test` needs no AWS account and
-# no credentials, which is what makes it usable as a required check in CI.
-# `command = apply` against mocks is what makes computed attributes (rule sets,
-# rendered conditions, alarm settings) readable in an assertion; nothing is
-# created anywhere.
-
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -163,7 +155,7 @@ run "staleness_alarm_treats_silence_as_failure" {
 run "one_notification_topic_per_region" {
   command = apply
 
-  # Vault notifications cannot cross a Region, so a single topic would silently
+  # Vault notifications cannot cross a Region, so a single topic would
   # drop everything the secondary vault emits.
   assert {
     condition     = length(local.managed_regions) == 2

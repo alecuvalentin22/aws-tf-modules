@@ -242,7 +242,7 @@ resource "aws_cloudwatch_metric_alarm" "backup_freshness" {
   count = var.backup_bucket_name == null ? 0 : 1
 
   alarm_name        = "${var.name}-backup-stale"
-  alarm_description = "No GitLab backup written to s3://${var.backup_bucket_name} in ${var.backup_max_age_hours}h. Backups fail silently, and a restore is the only thing that makes them real."
+  alarm_description = "No GitLab backup written to s3://${var.backup_bucket_name} in ${var.backup_max_age_hours}h. A backup job that stops producing raises nothing on its own."
 
   namespace   = "AWS/S3"
   metric_name = "NumberOfObjects"

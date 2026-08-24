@@ -227,7 +227,7 @@ def _kms_client(region: str, role_arn: Optional[str]):
     The keys are centralised in a Security account while this rule runs in the workload
     account, so a read-only cross-account role is required. This is the part most often
     missed at design time, the rule works fine in the account that owns the keys and
-    silently fails everywhere else.
+    fails everywhere else.
     """
     import boto3  # imported here so the pure logic above stays importable without it
 

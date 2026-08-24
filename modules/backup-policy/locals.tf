@@ -25,7 +25,7 @@ locals {
   # Managed destinations get a vault built by the child module in this account,
   # in an arbitrary Region, via the provider's per-resource `region` argument.
   # External destinations (in practice, the isolated backup account) are only
-  # referenced, they are deployed separately with their own credentials.
+  # referenced. They are deployed separately, with their own credentials.
   # ---------------------------------------------------------------------------
   managed_destinations = {
     for k, d in var.copy_destinations : k => d if d.vault_arn == null
@@ -104,7 +104,7 @@ locals {
   # Keyed only by destination name. The primary vault's window is deliberately
   # NOT merged into this map under a sentinel key: a destination named after the
   # sentinel would then overwrite it, and the primary vault's retention check
-  # would silently pass for any value. A guardrail that fails open on a name
+  # would pass for any value. A guardrail that fails open on a name
   # collision is worse than no guardrail.
   destination_lock_windows = merge(
     {

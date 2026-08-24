@@ -176,7 +176,7 @@ variable "force_destroy" {
 
     False everywhere that matters. Useful for a throwaway sandbox, and irrelevant once a
     compliance-mode lock is committed, that lock refuses the deletion regardless of this
-    setting, which is the point of it.
+    setting.
   EOT
   type        = bool
   default     = false

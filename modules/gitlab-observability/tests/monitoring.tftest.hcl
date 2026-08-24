@@ -1,8 +1,3 @@
-# Monitoring behaviour, with particular attention to the ways a monitoring stack
-# can look healthy while watching nothing.
-#
-# Runs against a mocked provider, so no AWS account or credentials are needed.
-
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -67,7 +62,7 @@ run "every_critical_alarm_treats_missing_data_as_breaching" {
 
   assert {
     condition     = aws_cloudwatch_metric_alarm.backup_freshness[0].treat_missing_data == "breaching"
-    error_message = "Backups fail silently; absence of data is exactly the symptom."
+    error_message = "A stalled backup job emits nothing at all, so absence of data is the symptom."
   }
 }
 
@@ -132,7 +127,7 @@ run "no_disk_or_memory_alarms_without_the_cloudwatch_agent" {
     condition = anytrue([
       for gap in output.coverage_gaps : strcontains(gap, "CloudWatch agent")
     ])
-    error_message = "An unmonitored dimension must be reported, not silently skipped."
+    error_message = "An unmonitored dimension must be reported, not passed over."
   }
 }
 

@@ -191,7 +191,7 @@ variable "backup_max_age_hours" {
   description = <<-EOT
     Hours without a fresh backup object before the freshness alarm fires.
 
-    Backups fail silently; that is their defining characteristic. The alarm watches the
+    A failed backup announces nothing. The alarm watches the
     age of the object rather than the exit code of the job, so a run that "succeeds"
     while writing nothing is still caught.
   EOT

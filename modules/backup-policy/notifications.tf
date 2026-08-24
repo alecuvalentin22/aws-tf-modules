@@ -288,7 +288,7 @@ resource "aws_cloudwatch_metric_alarm" "stale" {
   comparison_operator = "LessThanThreshold"
 
   # The whole point: absence of data IS the failure. Getting this backwards is
-  # the classic monitoring bug, the alarm stays green precisely when the system
+  # the classic monitoring bug: the alarm stays green precisely when the system
   # has stopped working.
   treat_missing_data = "breaching"
 

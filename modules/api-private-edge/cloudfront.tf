@@ -1,7 +1,7 @@
 
 locals {
   # Managed policy IDs. Referenced by their AWS-published values rather than by a
-  # data source so the intent is legible in review and cannot silently resolve to
+  # data source so the intent is legible in review and cannot resolve to
   # something else.
   #
   # CachingDisabled: API responses are per-caller and must never be shared.

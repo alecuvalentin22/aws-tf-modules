@@ -1,7 +1,8 @@
 # The failure modes this module exists to prevent.
 #
 # Each run supplies a configuration that AWS would accept at apply time and then
-# fail on, silently, in production. The assertion is that Terraform refuses it
+# fail on in production, with nothing in the apply output to say so. The
+# assertion is that Terraform refuses it
 # first. A guardrail with no test proving it fires is decoration.
 
 mock_provider "aws" {
@@ -158,7 +159,7 @@ run "accepts_retention_that_sits_inside_every_window" {
 }
 
 # --------------------------------------------------------------------------
-# Typos that would otherwise fail silently
+# Typos that would otherwise go unnoticed
 # --------------------------------------------------------------------------
 
 run "rejects_a_copy_to_a_destination_that_does_not_exist" {
@@ -556,7 +557,7 @@ run "rejects_continuous_backup_with_copies_unless_acknowledged" {
 
 # The two acknowledgements used to share one flag. An ordinary sandbox, one
 # copy Region with its lock deliberately off, forced that flag on, and it then
-# waived the unrelated cross-account KMS requirement, silently re-opening the
+# waived the unrelated cross-account KMS requirement, re-opening the
 # gap that guard exists to close.
 run "an_unlocked_sandbox_region_does_not_require_an_acknowledgement" {
   command = apply
@@ -650,7 +651,7 @@ run "a_disabled_lock_on_the_primary_vault_is_reported" {
 
   assert {
     condition     = contains(local.unvalidated_retention_targets, "primary vault (lock disabled)")
-    error_message = "An unvalidated primary vault must be reported, not silently skipped."
+    error_message = "An unvalidated primary vault must be reported, not passed over."
   }
 
   assert {
@@ -661,7 +662,7 @@ run "a_disabled_lock_on_the_primary_vault_is_reported" {
 
 # Merging field by field made null mean "inherit", which left no way to say
 # "no cold tier on this hop", so a short warm operational copy of a rule that
-# tiers to cold became inexpressible, and silently inherited a transition that
+# tiers to cold became inexpressible, and inherited a transition that
 # makes restores take hours.
 run "a_copy_override_can_clear_the_cold_storage_transition" {
   command = apply
@@ -698,7 +699,7 @@ run "a_copy_override_can_clear_the_cold_storage_transition" {
 }
 
 # Fields that apply to one kind of destination are refused on the other rather
-# than silently ignored.
+# than ignored.
 run "rejects_an_external_only_field_on_a_managed_destination" {
   command = plan
 

@@ -79,7 +79,7 @@ variable "rules" {
     # Attributes are optional with NO default, so an unset field stays null and
     # is distinguishable from an explicit false. That is what lets an override
     # be merged field by field over `retention` instead of replacing it
-    # wholesale, a partial override that silently dropped cold_storage_after
+    # wholesale, a partial override that dropped cold_storage_after
     # would keep a seven-year copy in warm storage.
     copy_retention = optional(map(object({
       delete_after       = optional(number)
@@ -233,7 +233,7 @@ variable "rules" {
   }
 
   # A copy_retention key that names no destination is almost always a typo that
-  # would otherwise be silently ignored.
+  # would otherwise be ignored without comment.
   validation {
     condition = alltrue(flatten([
       for r in var.rules : [
@@ -319,7 +319,7 @@ variable "copy_destinations" {
 
     # No default, so "unset" stays distinguishable from "explicitly true" and the
     # validation below can reject it on an external destination instead of
-    # silently ignoring it. Managed destinations get true.
+    # ignoring it outright. Managed destinations get true.
     create_kms_key              = optional(bool)
     kms_key_arn                 = optional(string)
     kms_deletion_window_in_days = optional(number)
@@ -371,7 +371,7 @@ variable "copy_destinations" {
   }
 
   # Fields that apply to only one kind of destination are rejected on the other
-  # rather than silently ignored. A setting that appears to take effect and does
+  # rather than ignored. A setting that appears to take effect and does
   # not is worse than one that is refused.
   validation {
     condition = alltrue([
@@ -463,7 +463,7 @@ variable "selection_not_resources" {
 variable "opt_in_resource_types" {
   description = <<-EOT
     Per-Region AWS Backup resource-type opt-in. `resources = ["*"]` only covers types that are
-    opted in for that Region, so an un-opted type is skipped silently and the plan appears to
+    opted in for that Region, so an un-opted type is skipped and the plan appears to
     succeed while protecting less than it claims.
 
     Left null by default on purpose: `aws_backup_region_settings` is an account-and-Region
@@ -664,7 +664,7 @@ variable "deny_delete_principals_except" {
     Principal ARNs exempt from the deny-delete vault policy, typically a break-glass role.
     Empty denies every principal.
 
-    Exempt from the POLICY only. Nothing is exempt from Vault Lock, which is the point of it.
+    Exempt from the POLICY only. Nothing is exempt from Vault Lock.
   EOT
   type        = list(string)
   default     = []
@@ -682,7 +682,7 @@ variable "acknowledge_unchecked_copy_destinations" {
 
     The plan-time retention check is this module's headline guarantee, and for an EXTERNAL
     destination it can only run if the caller supplies `lock_min_retention_days` /
-    `lock_max_retention_days`, the module cannot read a Vault Lock in another account.
+    `lock_max_retention_days`. The module cannot read a Vault Lock in another account.
 
     Left false so that omitting them is an error rather than a silent skip. Failing open
     with no signal is the wrong default for a guardrail, and the cross-account hop is both

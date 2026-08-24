@@ -31,7 +31,7 @@ output "lock" {
 output "kms_key_policy_json" {
   description = <<-EOT
     The rendered KMS key policy. Exposed so it can be asserted on in `terraform test` and
-    diffed in review: this policy is what actually permits (or silently blocks) a
+    diffed in review: this policy is what permits (or blocks) a
     cross-account copy, and it is not visible in a plan diff in any readable form.
   EOT
   value       = var.create_kms_key ? local.kms_policy : null
