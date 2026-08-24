@@ -18,6 +18,34 @@
 #   whole picture; see the note at the bottom.
 ###############################################################################
 
+###############################################################################
+# PREREQUISITES that live outside this configuration
+#
+# Cross-account copy does not work without all of these, and none of them fails
+# at apply time -- the plan applies cleanly and the copy job fails from night
+# one. Check them before treating a green apply as a working backup policy.
+#
+#   1. Both accounts are in the same AWS Organization.
+#
+#   2. `isCrossAccountBackupEnabled = true` at the organisation level. The API
+#      is only valid from the Organizations MANAGEMENT account, so it is not set
+#      here. The module exposes it as
+#      `enable_cross_account_backup_global_setting` for the management account's
+#      own configuration.
+#
+#   3. The AWS Backup resource types are opted in per Region. `resources = ["*"]`
+#      only covers opted-in types, and an un-opted type is skipped SILENTLY --
+#      the plan reports success while protecting less than it appears to. This
+#      belongs in the account baseline; see the module's `opt_in_resource_types`.
+#
+#   4. AWS Config is recording, if the Audit Manager framework is enabled below.
+#      Without it the framework deploys and evaluates nothing.
+#
+# Verify with a full backup -> copy -> RESTORE cycle before switching any vault
+# to compliance mode. After that switch, a missing grant is a locked vault full
+# of unusable recovery points.
+###############################################################################
+
 terraform {
   required_version = ">= 1.9.0"
 
@@ -121,6 +149,13 @@ module "backup_policy" {
       vault_arn               = module.backup_account_vault.arn
       lock_min_retention_days = module.backup_account_vault.lock.min_retention_days
       lock_max_retention_days = module.backup_account_vault.lock.max_retention_days
+
+      # Required, and the easiest thing here to get wrong. The destination key
+      # policy grants arn:aws:iam::<prod>:root, which DELEGATES to the prod
+      # account's IAM -- it does not authorise any principal there by itself.
+      # The backup role also needs an IAM allow naming this key, and the module
+      # cannot construct it without the ARN.
+      kms_key_arn_external = module.backup_account_vault.kms_key_arn
     }
   }
 
@@ -179,6 +214,10 @@ module "backup_policy" {
   }
 
   notification_subscriptions = var.notification_subscriptions
+
+  # Break-glass exemption applies to the deny-delete POLICY only. Vault Lock
+  # exempts nobody.
+  deny_delete_principals_except = var.break_glass_role_arns
 
   enable_restore_testing = true
   enable_audit_framework = true

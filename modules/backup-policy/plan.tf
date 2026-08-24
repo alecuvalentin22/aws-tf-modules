@@ -85,9 +85,60 @@ resource "aws_backup_plan" "this" {
       EOT
     }
 
+    # Finding the module cannot check is a finding the operator must be told
+    # about. Silence here would mean the headline guarantee is inoperative on
+    # the cross-account hop -- the destination with the least visibility and the
+    # most likely to carry a stricter compliance lock.
+    precondition {
+      condition     = var.acknowledge_unchecked_copy_destinations || length(local.unchecked_destinations) == 0
+      error_message = <<-EOT
+        Retention could not be validated for copy destination(s): ${join(", ", local.unchecked_destinations)}.
+
+        An external destination's Vault Lock lives in another account, so this module cannot
+        read it. Declare the window it enforces:
+
+          copy_destinations = {
+            ${try(local.unchecked_destinations[0], "<destination>")} = {
+              vault_arn               = "..."
+              lock_min_retention_days = 7
+              lock_max_retention_days = 3650
+            }
+          }
+
+        A managed destination reaches this state only when its lock is disabled, in which case
+        there is no window to check.
+
+        To accept the gap knowingly, set acknowledge_unchecked_copy_destinations = true. The
+        `unchecked_copy_destinations` output names them either way.
+      EOT
+    }
+
     precondition {
       condition     = !var.enable_audit_reports || var.report_bucket_name != null
       error_message = "report_bucket_name is required when enable_audit_reports is true."
+    }
+
+    # An encrypted cross-account copy needs the source role allowed on the
+    # DESTINATION key. The destination key policy granting `<source>:root` only
+    # delegates to this account's IAM; it does not authorise anything by itself.
+    # Without both halves the copy job fails with AccessDenied every night.
+    precondition {
+      condition = alltrue([
+        for k, d in local.external_destinations :
+        d.kms_key_arn_external != null || var.acknowledge_unchecked_copy_destinations
+      ])
+      error_message = <<-EOT
+        External copy destination(s) have no kms_key_arn_external set.
+
+        A cross-account copy of an encrypted resource re-encrypts with a key in the
+        destination account. The destination key policy granting arn:aws:iam::<this account>:root
+        DELEGATES to this account's IAM -- it does not grant any principal here. The backup role
+        also needs an IAM allow naming that key, which this module cannot construct without
+        its ARN.
+
+        Set copy_destinations.<name>.kms_key_arn_external to the destination vault's key ARN
+        (the backup-vault module outputs it as `kms_key_arn`).
+      EOT
     }
   }
 }

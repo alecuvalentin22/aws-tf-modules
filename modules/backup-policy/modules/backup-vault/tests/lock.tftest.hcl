@@ -117,6 +117,11 @@ run "a_cross_account_destination_grants_the_source_account" {
   # Both the vault policy and the KMS key policy have to name the source
   # account. Granting only one of them is the most common reason a
   # cross-account copy job never lands.
+  #
+  # This run only asserts the resources EXIST; what they actually grant is
+  # asserted on the rendered JSON in policies.tftest.hcl. Checking existence and
+  # calling it a permissions test is how a policy suite passes for the wrong
+  # reason.
   assert {
     condition     = length(aws_backup_vault_policy.this) == 1
     error_message = "A vault with source accounts must carry an access policy."

@@ -21,6 +21,7 @@ variables {
       vault_arn               = "arn:aws:backup:eu-central-1:222222222222:backup-vault:platform-iso"
       lock_min_retention_days = 7
       lock_max_retention_days = 3650
+      kms_key_arn_external    = "arn:aws:kms:eu-central-1:222222222222:key/33333333-3333-3333-3333-333333333333"
     }
   }
 }
@@ -110,19 +111,30 @@ run "selection_requires_all_tags_not_any" {
 run "each_vault_is_distinct_and_separately_encrypted" {
   command = apply
 
-  # One key per vault. The provider validates KMS ARNs client-side, so the mock
-  # has to return a fixed one and distinctness of the VALUES is not observable
-  # here; the count is, and it is the invariant that matters -- a shared key
-  # would make the cross-Region copy depend on the source Region's key.
+  # One key per vault, plus the external destination's declared key. The
+  # provider validates KMS ARNs client-side, so the mock returns a fixed one and
+  # distinctness of the VALUES is not observable here; the count is, and it is
+  # the invariant that matters -- a shared key would make the cross-Region copy
+  # depend on the source Region's key.
   assert {
-    condition     = length(local.vault_key_arns) == 2
-    error_message = "There should be exactly one KMS key per vault: the primary plus each managed copy destination."
+    condition     = length(local.vault_key_arns) == 3
+    error_message = "There should be one KMS key per vault (primary + managed destination) plus the declared external destination key."
   }
 
-  # Restore testing has to look at the copies too.
+  # Restore testing is a REGIONAL service: a plan in one Region cannot select a
+  # vault in another. One plan per Region, each covering only the vaults it can
+  # reach -- otherwise the copies are never restore-tested, which is exactly the
+  # assumption restore testing exists to disprove.
   assert {
-    condition     = length(local.restore_testing_include_vaults) == 2
-    error_message = "Restore testing should cover the primary vault and every managed copy destination."
+    condition     = length(aws_backup_restore_testing_plan.this) == 2
+    error_message = "There should be one restore testing plan per Region the module places a vault in."
+  }
+
+  assert {
+    condition = alltrue([
+      for r, vaults in local.vaults_by_region : length(vaults) == 1
+    ])
+    error_message = "Each Region's restore testing plan should cover that Region's own vault."
   }
 
   # The cross-account destination is external: its ARN comes from the caller,

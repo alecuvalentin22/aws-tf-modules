@@ -57,9 +57,20 @@ output "notification_topic_arns" {
   value       = { for k, t in aws_sns_topic.backup : k => t.arn }
 }
 
-output "restore_testing_plan_name" {
-  description = "Name of the restore testing plan, or null when restore testing is disabled."
-  value       = var.enable_restore_testing ? aws_backup_restore_testing_plan.this[0].name : null
+output "restore_testing_plan_names" {
+  description = "Restore testing plan names by Region. One per Region, because restore testing cannot select a vault in another Region."
+  value       = { for k, p in aws_backup_restore_testing_plan.this : k => p.name }
+}
+
+output "unchecked_copy_destinations" {
+  description = <<-EOT
+    Copy destinations whose Vault Lock retention window was not declared, and whose retention
+    therefore could NOT be validated at plan time.
+
+    Always empty unless `acknowledge_unchecked_copy_destinations` is true. Surfaced so the
+    gap in the module's headline guarantee is visible rather than silent.
+  EOT
+  value       = local.unchecked_destinations
 }
 
 output "audit_framework_arn" {

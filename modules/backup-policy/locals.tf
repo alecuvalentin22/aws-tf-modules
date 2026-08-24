@@ -60,11 +60,31 @@ locals {
       for dest in r.copy_to : {
         destination           = dest
         destination_vault_arn = local.destination_vault_arns[dest]
-        lifecycle_config = lookup(r.copy_retention, dest, {
-          delete_after                              = r.retention.delete_after
-          cold_storage_after                        = r.retention.cold_storage_after
-          opt_in_to_archive_for_supported_resources = r.retention.opt_in_to_archive_for_supported_resources
-        })
+        # Merged field by field rather than substituted wholesale. A partial
+        # override such as `{ delete_after = 2555 }` on a rule whose lifecycle
+        # sets cold_storage_after would otherwise produce a seven-year copy kept
+        # entirely in WARM storage -- roughly an order of magnitude more
+        # expensive, with nothing in the plan to indicate it.
+        # Merged field by field rather than substituted wholesale. A partial
+        # override such as `{ delete_after = 2555 }` on a rule whose lifecycle
+        # sets cold_storage_after would otherwise produce a seven-year copy kept
+        # entirely in WARM storage -- roughly an order of magnitude more
+        # expensive, with nothing in the plan to indicate it.
+        #
+        # The copy_retention object attributes are `optional` with no default, so
+        # an unset field is null and stays distinguishable from an explicit false.
+        lifecycle_config = {
+          delete_after = coalesce(
+            try(r.copy_retention[dest].delete_after, null),
+            r.retention.delete_after,
+          )
+          cold_storage_after = try(r.copy_retention[dest].cold_storage_after, null) != null ? (
+            r.copy_retention[dest].cold_storage_after
+          ) : r.retention.cold_storage_after
+          opt_in_to_archive_for_supported_resources = try(r.copy_retention[dest].opt_in_to_archive_for_supported_resources, null) != null ? (
+            r.copy_retention[dest].opt_in_to_archive_for_supported_resources
+          ) : r.retention.opt_in_to_archive_for_supported_resources
+        }
       }
       if contains(keys(var.copy_destinations), dest)
     ]
@@ -82,14 +102,18 @@ locals {
   # Each entry is (rule, destination, retention, window) so the error message can
   # name the exact rule and destination rather than saying "something is wrong".
   # ---------------------------------------------------------------------------
-  lock_windows = merge(
-    {
-      "__primary__" = {
-        enabled = var.primary_vault.lock.enabled
-        min     = var.primary_vault.lock.min_retention_days
-        max     = var.primary_vault.lock.max_retention_days
-      }
-    },
+  primary_lock_window = {
+    enabled = var.primary_vault.lock.enabled
+    min     = var.primary_vault.lock.min_retention_days
+    max     = var.primary_vault.lock.max_retention_days
+  }
+
+  # Keyed only by destination name. The primary vault's window is deliberately
+  # NOT merged into this map under a sentinel key: a destination named after the
+  # sentinel would then overwrite it, and the primary vault's retention check
+  # would silently pass for any value. A guardrail that fails open on a name
+  # collision is worse than no guardrail.
+  destination_lock_windows = merge(
     {
       for k, d in local.managed_destinations : k => {
         enabled = d.lock.enabled
@@ -99,7 +123,8 @@ locals {
     },
     {
       for k, d in local.external_destinations : k => {
-        # Only checkable when the caller tells us the external vault's window.
+        # Only checkable when the caller declares the external vault's window --
+        # this module cannot read a Vault Lock in another account.
         enabled = d.lock_min_retention_days != null || d.lock_max_retention_days != null
         min     = coalesce(d.lock_min_retention_days, 1)
         max     = coalesce(d.lock_max_retention_days, 36500)
@@ -107,37 +132,48 @@ locals {
     },
   )
 
-  retention_checks = flatten([
-    for r in var.rules : concat(
-      [{
-        rule         = r.name
-        destination  = "__primary__"
-        delete_after = r.retention.delete_after
-      }],
-      [
-        for c in local.copy_actions[r.name] : {
-          rule         = r.name
-          destination  = c.destination
-          delete_after = c.lifecycle_config.delete_after
-        }
-      ],
-    )
+  # Destinations whose retention could NOT be checked, so the omission is
+  # visible instead of silent. Surfaced as an output and, unless explicitly
+  # acknowledged, as a plan-time error.
+  unchecked_destinations = sort([
+    for k, w in local.destination_lock_windows : k if !w.enabled
   ])
 
-  retention_violations = [
-    for c in local.retention_checks : format(
-      "rule %q -> %s: delete_after=%d is outside the vault lock window [%d, %d]",
-      c.rule,
-      c.destination == "__primary__" ? "primary vault" : "destination ${c.destination}",
-      c.delete_after,
-      local.lock_windows[c.destination].min,
-      local.lock_windows[c.destination].max,
+  primary_retention_violations = [
+    for r in var.rules : format(
+      "rule %q -> primary vault: delete_after=%d is outside the vault lock window [%d, %d]",
+      r.name,
+      r.retention.delete_after,
+      local.primary_lock_window.min,
+      local.primary_lock_window.max,
     )
-    if local.lock_windows[c.destination].enabled && (
-      c.delete_after < local.lock_windows[c.destination].min ||
-      c.delete_after > local.lock_windows[c.destination].max
+    if local.primary_lock_window.enabled && (
+      r.retention.delete_after < local.primary_lock_window.min ||
+      r.retention.delete_after > local.primary_lock_window.max
     )
   ]
+
+  copy_retention_violations = flatten([
+    for r in var.rules : [
+      for c in local.copy_actions[r.name] : format(
+        "rule %q -> destination %q: delete_after=%d is outside the vault lock window [%d, %d]",
+        r.name,
+        c.destination,
+        c.lifecycle_config.delete_after,
+        local.destination_lock_windows[c.destination].min,
+        local.destination_lock_windows[c.destination].max,
+      )
+      if local.destination_lock_windows[c.destination].enabled && (
+        c.lifecycle_config.delete_after < local.destination_lock_windows[c.destination].min ||
+        c.lifecycle_config.delete_after > local.destination_lock_windows[c.destination].max
+      )
+    ]
+  ])
+
+  retention_violations = concat(
+    local.primary_retention_violations,
+    local.copy_retention_violations,
+  )
 
   # ---------------------------------------------------------------------------
   # A copy_to entry that names no destination would otherwise fail deep inside a
@@ -165,9 +201,65 @@ locals {
     for k, v in var.selection_excluded_tag_patterns : "aws:ResourceTag/${k}" => v
   }
 
+  # Keys the backup role needs IAM permission on. A destination key policy that
+  # grants `<source-account>:root` only DELEGATES to that account's IAM -- it
+  # does not itself authorise any principal there. Both sides must allow, so an
+  # external destination's key ARN has to be named here too or every encrypted
+  # cross-account copy fails with AccessDenied on the destination key.
+  external_destination_key_arns = compact([
+    for k, d in local.external_destinations : d.kms_key_arn_external
+  ])
+
   backup_role_arn = var.backup_role_arn != null ? var.backup_role_arn : aws_iam_role.backup[0].arn
 
   restore_testing_role_arn = coalesce(var.restore_testing_iam_role_arn, local.backup_role_arn)
 
   create_notifications = var.enable_notifications
+
+  # ---------------------------------------------------------------------------
+  # Audit framework inputs, derived from the configuration rather than hardcoded.
+  # ---------------------------------------------------------------------------
+  shortest_retention_days = min([for r in var.rules : r.retention.delete_after]...)
+
+  # How many days may pass between backups, taken from the LEAST frequent rule.
+  #
+  # AWS cron has six fields: minute hour day-of-month month day-of-week year.
+  # A pinned day-of-month means monthly; a pinned day-of-week means weekly;
+  # anything else is treated as daily. Deliberately coarse -- the Audit Manager
+  # parameter is in whole days, so a full cron parser would add risk without
+  # adding resolution.
+  cron_fields = {
+    for r in var.rules : r.name => (
+      startswith(r.schedule, "cron(")
+      ? split(" ", trimsuffix(trimprefix(r.schedule, "cron("), ")"))
+      : []
+    )
+  }
+
+  rule_gap_days = [
+    for r in var.rules : (
+      length(local.cron_fields[r.name]) < 5 ? 1 :
+      !contains(["*", "?"], local.cron_fields[r.name][2]) ? 31 :
+      !contains(["*", "?"], local.cron_fields[r.name][4]) ? 7 : 1
+    )
+  ]
+
+  longest_schedule_gap_days = max(local.rule_gap_days...)
+
+  copy_destination_regions = distinct([
+    for k, d in local.managed_destinations : coalesce(d.region, local.primary_region)
+  ])
+
+  external_destination_account_ids = distinct(compact([
+    for k, d in local.external_destinations :
+    try(split(":", d.vault_arn)[4], null)
+  ]))
+
+  # Null when the selection carries more or fewer than one exact-match tag: the
+  # AWS ControlScope API accepts at most one, so there is no correct way to
+  # render two.
+  audit_scope_tag = (
+    var.audit_scope_tag != null ? var.audit_scope_tag :
+    length(var.selection_required_tags) == 1 ? var.selection_required_tags : null
+  )
 }

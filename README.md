@@ -57,18 +57,24 @@ resource. A test runs it with five destinations.
 ```bash
 cd modules/backup-policy
 terraform init
-terraform test      # 26 tests, mocked provider, no AWS account needed
+terraform test      # 54 tests, mocked provider, no AWS account needed
 
 cd modules/backup-vault
-terraform init && terraform test   # 8 more
+terraform init && terraform test   # 19 more
 ```
 
 All tests use `mock_provider`, so they need no credentials and run as a required CI
-check. Two of them caught real bugs during development: a `count` derived from a value
-unknown until apply (which would have failed the very first plan in a fresh account, and
-never again), and an unknown copy destination crashing on a map index before the
-friendly precondition could produce its message. Neither is visible to
-`terraform validate`.
+check. They caught real bugs during development — a `count` derived from a value unknown
+until apply (which would have failed the very first plan in a fresh account, and never
+again), and an unknown copy destination crashing on a map index before the friendly
+precondition could produce its message. Neither is visible to `terraform validate`.
+
+The module was then put through an adversarial review by a second agent briefed to break
+it. That found three more silent failures — a vault policy that denied its own
+replacement, restore-testing selections that matched nothing, and SNS topics encrypted
+with a key no AWS service can publish through — none of which fail at apply time. All
+are fixed, each with a regression test. [`docs/review.md`](docs/review.md) records what
+was found and what changed.
 
 ---
 
@@ -80,6 +86,9 @@ friendly precondition could produce its message. Neither is visible to
 | [0002](docs/adr/0002-condition-not-selection-tag.md) | Resource selection uses `condition` (AND), never `selection_tag` (OR) |
 | [0003](docs/adr/0003-plan-time-retention-validation.md) | Validate retention against Vault Lock windows at plan time |
 | [0004](docs/adr/0004-module-composition-and-account-boundaries.md) | A leaf vault module, the provider `region` argument, and two states across the account boundary |
+
+[`docs/review.md`](docs/review.md) records the adversarial review of the module and the
+response to each finding.
 
 ---
 

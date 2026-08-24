@@ -226,21 +226,31 @@ require it.
 
 ## Testing
 
-34 tests across the two modules, all against a **mocked provider** — no AWS account,
+73 tests across the two modules, all against a **mocked provider** — no AWS account,
 no credentials, so they run as a required check in CI:
 
 | File | Covers |
 | --- | --- |
-| `tests/defaults.tftest.hcl` (7) | Shipped behaviour: three tiers, copy topology, AND-semantics selection, one key per vault, restore testing scope, alarm `treat_missing_data` |
-| `tests/guardrails.tftest.hcl` (16) | Every configuration the module refuses, including all four Vault Lock window cases and the accept case |
-| `tests/scaling.tftest.hcl` (3) | Five destinations across five Regions plus one cross-account target |
-| `modules/backup-vault/tests/lock.tftest.hcl` (8) | Lock modes, the compliance-mode acknowledgement guard, cross-account grants |
+| `tests/defaults.tftest.hcl` | Shipped behaviour: three tiers, copy topology, AND-semantics selection, one key per vault, per-Region restore testing, alarm `treat_missing_data` |
+| `tests/guardrails.tftest.hcl` | Every configuration the module refuses, including all Vault Lock window cases, the accept case, and regressions for the review findings below |
+| `tests/policies.tftest.hcl` | The rendered trust, copy/encrypt, SNS key and topic policies — the full cross-account permission path |
+| `tests/audit.tftest.hcl` | Framework controls, and that its parameters follow the configuration rather than constants |
+| `tests/scaling.tftest.hcl` | Five destinations across five Regions plus one cross-account target |
+| `modules/backup-vault/tests/lock.tftest.hcl` | Lock modes and the compliance-mode acknowledgement guard |
+| `modules/backup-vault/tests/policies.tftest.hcl` | The rendered vault and KMS key policies, including the scoping of the cross-account grant |
 
 The guardrail tests are the ones that matter. A guardrail with no test proving it fires
 is decoration, and every one of these was written by supplying a configuration that
 AWS would accept and then fail on.
 
-Two of them caught real bugs during development:
+**Policies are built with `jsonencode` rather than `aws_iam_policy_document`
+specifically so they can be tested.** A mocked provider cannot compute a data source, so
+a policy built that way renders as an empty placeholder and every statement in it goes
+untested — including the four grants that decide whether a cross-account copy works. The
+trade-off is losing the data source's ergonomics; the gain is that the security-carrying
+part of the module is the part under test.
+
+Two tests caught real bugs during development:
 
 - `count` derived from an SNS topic ARN that is unknown until apply — which would have
   failed the **very first** `terraform plan` in a fresh account, and never after.
@@ -248,6 +258,26 @@ Two of them caught real bugs during development:
   friendly precondition could produce its message.
 
 Both are the kind of defect that `terraform validate` cannot see.
+
+## Adversarial review
+
+The module was then handed to a second agent briefed to break it, with the module's own
+claims as the target. It found three silent failures — none of which fail at apply time,
+which is what makes them worth the exercise:
+
+| Found | Effect |
+| --- | --- |
+| The deny-delete vault policy denied `PutBackupVaultAccessPolicy` and `DeleteBackupVaultAccessPolicy` to `Principal: *` | The policy could never be corrected or removed by the role that created it; `terraform destroy` could never succeed |
+| Restore-testing selections filtered on `aws:ResourceTag/BackupRule` | That is a *recovery point* tag; `protected_resource_conditions` filters the *protected resource*. Every restore test selected zero resources, ran weekly, and reported success |
+| SNS topics encrypted with `alias/aws/sns` | The AWS-managed key grants no service principal `kms:GenerateDataKey*`, so every notification and alarm failed at delivery — including the staleness alarm, the one control that detects a plan that has stopped running |
+
+Plus a missing IAM grant on the destination key that would have broken every encrypted
+cross-account copy, a `__primary__` sentinel key collision that let the headline
+retention guardrail fail open, and a `copy_retention` override that silently dropped
+`cold_storage_after` — turning a seven-year copy into warm storage.
+
+All are fixed, each with a regression test. [`review.md`](review.md) records the full
+finding list and the response to each.
 
 ---
 

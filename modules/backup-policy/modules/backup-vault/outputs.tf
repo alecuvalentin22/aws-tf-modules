@@ -27,3 +27,17 @@ output "lock" {
     max_retention_days = var.lock.enabled ? var.lock.max_retention_days : null
   }
 }
+
+output "kms_key_policy_json" {
+  description = <<-EOT
+    The rendered KMS key policy. Exposed so it can be asserted on in `terraform test` and
+    diffed in review: this policy is what actually permits (or silently blocks) a
+    cross-account copy, and it is not visible in a plan diff in any readable form.
+  EOT
+  value       = var.create_kms_key ? local.kms_policy : null
+}
+
+output "vault_policy_json" {
+  description = "The rendered vault access policy, or null when none is attached. Exposed for the same reason as the key policy."
+  value       = local.create_vault_policy ? local.vault_policy : null
+}

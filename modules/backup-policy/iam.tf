@@ -11,31 +11,33 @@
 # cross-account copy actually needs.
 ###############################################################################
 
-data "aws_iam_policy_document" "backup_assume" {
-  count = var.backup_role_arn == null ? 1 : 0
-
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["backup.amazonaws.com"]
-    }
-
-    # Confused-deputy guard: only AWS Backup acting on behalf of this account.
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
-
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:${local.partition}:backup:*:${local.account_id}:*"]
-    }
-  }
+locals {
+  backup_assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Action    = "sts:AssumeRole"
+        Principal = { Service = "backup.amazonaws.com" }
+        # Confused-deputy guard: only AWS Backup acting on behalf of this account.
+        #
+        # IfExists, not the plain operators. A StringEquals on a context key that
+        # the caller does not populate evaluates to FALSE, which would make the
+        # role unassumable and stop every backup job in the account -- silently,
+        # since nothing fails at apply time. AWS's own generated service role
+        # carries no conditions at all; IfExists keeps the protection where the
+        # keys are present without betting the whole plan on them always being so.
+        Condition = {
+          StringEqualsIfExists = {
+            "aws:SourceAccount" = local.account_id
+          }
+          ArnLikeIfExists = {
+            "aws:SourceArn" = "arn:${local.partition}:backup:*:${local.account_id}:*"
+          }
+        }
+      },
+    ]
+  })
 }
 
 resource "aws_iam_role" "backup" {
@@ -43,7 +45,7 @@ resource "aws_iam_role" "backup" {
 
   name                 = "${var.name}-service-role"
   description          = "Assumed by AWS Backup for the ${var.name} plan"
-  assume_role_policy   = data.aws_iam_policy_document.backup_assume[0].json
+  assume_role_policy   = local.backup_assume_role_policy
   max_session_duration = 3600
   tags                 = local.tags
 }
@@ -56,11 +58,16 @@ locals {
     s3_restore = "arn:${local.partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForS3Restore"
   } : {}
 
-  # Keys the role must be able to use: the primary vault's, plus every managed
-  # destination's. External destinations' keys are granted from the other side.
+  # Keys the role must be able to use: the primary vault's, every managed
+  # destination's, and every EXTERNAL destination's whose ARN the caller
+  # supplied. The last group is easy to miss: a destination key policy that
+  # grants `<source-account>:root` only delegates to that account's IAM. It does
+  # not authorise anything by itself, so without a matching allow here every
+  # encrypted cross-account copy fails with AccessDenied on the destination key.
   vault_key_arns = concat(
     [module.primary_vault.kms_key_arn],
     [for k, m in module.copy_vault : m.kms_key_arn],
+    local.external_destination_key_arns,
   )
 
   all_destination_vault_arns = values(local.destination_vault_arns)
@@ -73,47 +80,45 @@ resource "aws_iam_role_policy_attachment" "backup" {
   policy_arn = each.value
 }
 
-data "aws_iam_policy_document" "backup_copy" {
-  count = var.backup_role_arn == null ? 1 : 0
-
-  dynamic "statement" {
-    for_each = length(local.all_destination_vault_arns) > 0 ? [1] : []
-
-    content {
-      sid       = "CopyIntoDestinationVaults"
-      effect    = "Allow"
-      actions   = ["backup:CopyIntoBackupVault"]
-      resources = local.all_destination_vault_arns
-    }
-  }
-
-  statement {
-    sid    = "UseVaultKeys"
-    effect = "Allow"
-    actions = [
-      "kms:Decrypt",
-      "kms:DescribeKey",
-      "kms:Encrypt",
-      "kms:GenerateDataKey",
-      "kms:GenerateDataKeyWithoutPlaintext",
-      "kms:ReEncryptFrom",
-      "kms:ReEncryptTo",
-    ]
-    resources = local.vault_key_arns
-  }
-
-  statement {
-    sid       = "GrantOnVaultKeysForAWSResources"
-    effect    = "Allow"
-    actions   = ["kms:CreateGrant"]
-    resources = local.vault_key_arns
-
-    condition {
-      test     = "Bool"
-      variable = "kms:GrantIsForAWSResource"
-      values   = ["true"]
-    }
-  }
+locals {
+  backup_copy_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      [
+        for _ in(length(local.all_destination_vault_arns) > 0 ? [1] : []) : {
+          Sid      = "CopyIntoDestinationVaults"
+          Effect   = "Allow"
+          Action   = "backup:CopyIntoBackupVault"
+          Resource = local.all_destination_vault_arns
+        }
+      ],
+      [
+        {
+          Sid    = "UseVaultKeys"
+          Effect = "Allow"
+          Action = [
+            "kms:Decrypt",
+            "kms:DescribeKey",
+            "kms:Encrypt",
+            "kms:GenerateDataKey",
+            "kms:GenerateDataKeyWithoutPlaintext",
+            "kms:ReEncryptFrom",
+            "kms:ReEncryptTo",
+          ]
+          Resource = local.vault_key_arns
+        },
+        {
+          Sid      = "GrantOnVaultKeysForAWSResources"
+          Effect   = "Allow"
+          Action   = "kms:CreateGrant"
+          Resource = local.vault_key_arns
+          Condition = {
+            Bool = { "kms:GrantIsForAWSResource" = "true" }
+          }
+        },
+      ],
+    )
+  })
 }
 
 resource "aws_iam_role_policy" "backup_copy" {
@@ -121,5 +126,5 @@ resource "aws_iam_role_policy" "backup_copy" {
 
   name   = "${var.name}-copy-and-encrypt"
   role   = aws_iam_role.backup[0].id
-  policy = data.aws_iam_policy_document.backup_copy[0].json
+  policy = local.backup_copy_policy
 }

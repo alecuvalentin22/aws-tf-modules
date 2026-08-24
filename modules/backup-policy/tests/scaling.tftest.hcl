@@ -25,6 +25,7 @@ variables {
       vault_arn               = "arn:aws:backup:eu-central-1:222222222222:backup-vault:platform-iso"
       lock_min_retention_days = 7
       lock_max_retention_days = 3650
+      kms_key_arn_external    = "arn:aws:kms:eu-central-1:222222222222:key/33333333-3333-3333-3333-333333333333"
     }
   }
 
@@ -82,8 +83,22 @@ run "the_backup_role_can_reach_every_destination" {
     error_message = "The role's copy permissions should cover every destination, managed and external."
   }
 
+  # Primary + four managed destinations + the external destination's key.
+  #
+  # The external one is the easy one to miss: a destination key policy granting
+  # arn:aws:iam::<source>:root DELEGATES to the source account's IAM, it does not
+  # authorise anything by itself. Without a matching IAM allow here, every
+  # encrypted cross-account copy fails with AccessDenied on the destination key.
   assert {
-    condition     = length(local.vault_key_arns) == 5
-    error_message = "The role should be granted the primary key plus each managed destination key."
+    condition     = length(local.vault_key_arns) == 6
+    error_message = "The role should be granted the primary key, each managed destination key, and each declared external destination key."
+  }
+
+  assert {
+    condition = contains(
+      local.vault_key_arns,
+      "arn:aws:kms:eu-central-1:222222222222:key/33333333-3333-3333-3333-333333333333",
+    )
+    error_message = "The external (cross-account) destination's KMS key must be named in the backup role's policy."
   }
 }

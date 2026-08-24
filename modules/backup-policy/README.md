@@ -128,9 +128,17 @@ copy_destinations = {
     vault_arn = module.backup_account_vault.arn
 
     # Declaring the destination's lock window lets the module reject, at plan time, a
-    # retention that AWS would reject nightly at run time. Omit to skip the check.
+    # retention that AWS would reject nightly at run time. Omitting it is an ERROR
+    # unless acknowledge_unchecked_copy_destinations is set: a guardrail that fails
+    # open silently on the cross-account hop is worse than no guardrail.
     lock_min_retention_days = 7
     lock_max_retention_days = 3650
+
+    # Required. The destination key policy granting arn:aws:iam::<this account>:root
+    # only DELEGATES to this account's IAM -- it authorises nothing by itself. The
+    # backup role needs a matching IAM allow naming this key, or every encrypted
+    # cross-account copy fails with AccessDenied.
+    kms_key_arn_external = module.backup_account_vault.kms_key_arn
   }
 }
 ```
@@ -163,6 +171,10 @@ or destination, and every one has a test proving it fires.
 | `copy_to` naming an undefined destination | A typo would otherwise produce a plan with a missing copy |
 | `copy_retention` for a destination not in `copy_to` | Silently ignored otherwise |
 | An empty `selection_required_tags` | `resources = ["*"]` with no condition backs up the whole account |
+| An external destination with no declared lock window | Its retention cannot be checked; failing open silently on the cross-account hop defeats the guardrail |
+| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied |
+| `completion_window_minutes == start_window_minutes` | AWS requires it to be strictly greater |
+| Continuous backup with copies, unacknowledged | Copying continuous recovery points is only supported for some resource types |
 | A destination that is both `region` and `vault_arn`, or neither | Ambiguous |
 | A COMPLIANCE lock without `confirm_irreversible_compliance_lock` | It cannot be undone by anyone, including AWS |
 
@@ -216,11 +228,11 @@ undo it. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
 ## Testing
 
 ```bash
-cd modules/backup-policy && terraform init && terraform test                    # 26 tests
-cd modules/backup-policy/modules/backup-vault && terraform init && terraform test  # 8 tests
+cd modules/backup-policy && terraform init && terraform test                       # 54 tests
+cd modules/backup-policy/modules/backup-vault && terraform init && terraform test  # 19 tests
 ```
 
-All 34 run against a **mocked provider**: no AWS account, no credentials, so they work
+All 73 run against a **mocked provider**: no AWS account, no credentials, so they work
 as a required CI check. Shared mocks live in `tests/mocks/aws.tfmock.hcl`.
 
 | File | Covers |
@@ -228,7 +240,15 @@ as a required CI check. Shared mocks live in `tests/mocks/aws.tfmock.hcl`.
 | `tests/defaults.tftest.hcl` | Shipped behaviour: tiers, copy topology, AND-semantics selection, one key per vault, restore-testing scope, alarm semantics |
 | `tests/guardrails.tftest.hcl` | Every configuration the module refuses, plus the accept case for the lock window |
 | `tests/scaling.tftest.hcl` | Five destinations across five Regions and one cross-account target |
-| `modules/backup-vault/tests/lock.tftest.hcl` | Lock modes, the compliance acknowledgement guard, cross-account grants |
+| `tests/policies.tftest.hcl` | The rendered trust, copy/encrypt, SNS key and topic policies — the full cross-account permission path |
+| `tests/audit.tftest.hcl` | Framework controls, and that its parameters follow the configuration rather than constants |
+| `modules/backup-vault/tests/lock.tftest.hcl` | Lock modes and the compliance acknowledgement guard |
+| `modules/backup-vault/tests/policies.tftest.hcl` | The rendered vault and KMS key policies, including the scoping of the cross-account grant |
+
+Policies are built with `jsonencode` rather than `aws_iam_policy_document` specifically
+so this is possible: a mocked provider cannot compute a data source, so a policy built
+that way renders as an empty placeholder and every statement in it goes untested. These
+policies decide whether a copy job succeeds or fails with `AccessDenied` at 02:00.
 
 ---
 
@@ -250,3 +270,18 @@ module "backup_account_vault" {
   lock = { enabled = true, mode = "governance", min_retention_days = 7, max_retention_days = 3650 }
 }
 ```
+
+Pass its `arn` **and** its `kms_key_arn` back to `backup-policy` as an external
+destination. The cross-account permission path is four grants and all four are
+required:
+
+| # | Grant | Where |
+| --- | --- | --- |
+| 1 | source role → `backup:CopyIntoBackupVault` on the destination vault | `backup-policy` |
+| 2 | source role → KMS data plane on the destination **key** | `backup-policy` |
+| 3 | destination vault policy → the source account | `backup-vault` |
+| 4 | destination key policy → the source account | `backup-vault` |
+
+Grant 2 is the one that gets missed, because grant 4 looks sufficient — but a key
+policy naming `<account>:root` only *delegates* to that account's IAM; it authorises
+nothing on its own. That is why `kms_key_arn_external` is required rather than optional.

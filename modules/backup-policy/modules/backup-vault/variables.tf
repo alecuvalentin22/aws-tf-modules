@@ -156,35 +156,16 @@ variable "enable_deny_delete_policy" {
   default     = true
 }
 
-variable "enable_notifications" {
+variable "force_destroy" {
   description = <<-EOT
-    Wire vault notifications to notification_sns_topic_arn.
+    Allow `terraform destroy` to delete the vault along with the recovery points it holds.
 
-    Deliberately a separate flag rather than `topic_arn != null`: the topic ARN is only known
-    after apply, so deriving `count` from it makes the very first plan fail with
-    "count value depends on resource attributes that cannot be determined until apply".
+    False everywhere that matters. Useful for a throwaway sandbox, and irrelevant once a
+    compliance-mode lock is committed -- that lock refuses the deletion regardless of this
+    setting, which is the point of it.
   EOT
   type        = bool
   default     = false
-}
-
-variable "notification_sns_topic_arn" {
-  description = "SNS topic (same account and Region as the vault) to receive vault events. Used when enable_notifications is true."
-  type        = string
-  default     = null
-}
-
-variable "notification_events" {
-  description = "Vault events published to notification_sns_topic_arn."
-  type        = list(string)
-  default = [
-    "BACKUP_JOB_FAILED",
-    "BACKUP_JOB_EXPIRED",
-    "COPY_JOB_FAILED",
-    "RESTORE_JOB_FAILED",
-    "S3_BACKUP_OBJECT_FAILED",
-    "S3_RESTORE_OBJECT_FAILED",
-  ]
 }
 
 variable "tags" {

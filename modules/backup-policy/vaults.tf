@@ -23,9 +23,9 @@ module "primary_vault" {
   lock                                 = var.primary_vault.lock
   confirm_irreversible_compliance_lock = var.confirm_irreversible_compliance_lock
 
-  enable_notifications       = local.create_notifications
-  notification_sns_topic_arn = local.create_notifications ? aws_sns_topic.backup[local.primary_region].arn : null
-  notification_events        = var.notification_events
+  enable_deny_delete_policy     = var.enable_deny_delete_policy
+  deny_delete_principals_except = var.deny_delete_principals_except
+  force_destroy                 = var.vault_force_destroy
 
   tags = local.tags
 }
@@ -42,9 +42,9 @@ module "copy_vault" {
   lock                                 = each.value.lock
   confirm_irreversible_compliance_lock = var.confirm_irreversible_compliance_lock
 
-  enable_notifications       = local.create_notifications
-  notification_sns_topic_arn = local.create_notifications ? aws_sns_topic.backup[coalesce(each.value.region, local.primary_region)].arn : null
-  notification_events        = var.notification_events
+  enable_deny_delete_policy     = var.enable_deny_delete_policy
+  deny_delete_principals_except = var.deny_delete_principals_except
+  force_destroy                 = var.vault_force_destroy
 
   tags = merge(local.tags, { CopyDestination = each.key })
 }

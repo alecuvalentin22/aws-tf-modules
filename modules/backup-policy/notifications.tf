@@ -12,89 +12,144 @@
 #                        failure mode that produces no event at all.
 ###############################################################################
 
+###############################################################################
+# Topic encryption
+#
+# `alias/aws/sns` cannot be used here. It is the AWS-MANAGED key: its policy
+# grants only this account's IAM principals via kms:ViaService, and it cannot be
+# edited. AWS Backup, EventBridge and CloudWatch therefore cannot obtain
+# kms:GenerateDataKey* on it, so every publish fails with
+# KMSAccessDeniedException -- at delivery time, invisibly. Nothing shows up in
+# the apply, in the alarm state or in the SNS console; you find out when a
+# backup fails and nobody is paged.
+#
+# That failure would silence the staleness alarm in particular, which is the one
+# control here that detects a plan that has stopped running at all.
+#
+# So: a customer managed key per Region, whose policy names the three service
+# principals that publish to these topics.
+###############################################################################
+
+locals {
+  sns_key_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableAccountIAMPolicies"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:${local.partition}:iam::${local.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid    = "AllowPublishingServicesToUseTheKey"
+        Effect = "Allow"
+        Principal = {
+          Service = [
+            "backup.amazonaws.com",
+            "events.amazonaws.com",
+            "cloudwatch.amazonaws.com",
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:GenerateDataKey*",
+        ]
+        Resource = "*"
+        Condition = {
+          StringEqualsIfExists = {
+            "aws:SourceAccount" = local.account_id
+          }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_kms_key" "sns" {
+  for_each = local.create_notifications ? toset(local.managed_regions) : toset([])
+
+  region = each.key
+
+  description             = "Encrypts the ${var.name} backup notification topic in ${each.key}"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  policy                  = local.sns_key_policy
+  tags                    = local.tags
+}
+
+resource "aws_kms_alias" "sns" {
+  for_each = local.create_notifications ? toset(local.managed_regions) : toset([])
+
+  region = each.key
+
+  name          = "alias/${var.name}-sns"
+  target_key_id = aws_kms_key.sns[each.key].key_id
+}
+
 resource "aws_sns_topic" "backup" {
   for_each = local.create_notifications ? toset(local.managed_regions) : toset([])
 
   region = each.key
 
   name              = "${var.name}-events"
-  kms_master_key_id = "alias/aws/sns"
+  kms_master_key_id = aws_kms_key.sns[each.key].arn
   tags              = local.tags
 }
 
-data "aws_iam_policy_document" "sns" {
-  for_each = local.create_notifications ? toset(local.managed_regions) : toset([])
+###############################################################################
+# Vault notifications
+#
+# Created here rather than inside the backup-vault module so they can carry a
+# depends_on to the topic policy. PutBackupVaultNotifications validates that the
+# topic policy permits backup.amazonaws.com to publish, so without this edge a
+# cold apply can issue the call before the policy is attached -- a
+# non-deterministic first-apply failure that succeeds on re-run and therefore
+# looks like flakiness rather than a missing dependency.
+###############################################################################
 
-  statement {
-    sid       = "AllowAWSBackupPublish"
-    effect    = "Allow"
-    actions   = ["SNS:Publish"]
-    resources = [aws_sns_topic.backup[each.key].arn]
+resource "aws_backup_vault_notifications" "primary" {
+  count = local.create_notifications ? 1 : 0
 
-    principals {
-      type        = "Service"
-      identifiers = ["backup.amazonaws.com"]
-    }
+  region = local.primary_region
 
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
-  }
+  backup_vault_name   = module.primary_vault.name
+  sns_topic_arn       = aws_sns_topic.backup[local.primary_region].arn
+  backup_vault_events = var.notification_events
 
-  statement {
-    sid       = "AllowEventBridgePublish"
-    effect    = "Allow"
-    actions   = ["SNS:Publish"]
-    resources = [aws_sns_topic.backup[each.key].arn]
+  depends_on = [aws_sns_topic_policy.backup]
+}
 
-    principals {
-      type        = "Service"
-      identifiers = ["events.amazonaws.com"]
-    }
+resource "aws_backup_vault_notifications" "copy" {
+  for_each = local.create_notifications ? local.managed_destinations : {}
 
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
-  }
+  region = coalesce(each.value.region, local.primary_region)
 
-  statement {
-    sid       = "AllowCloudWatchAlarmsPublish"
-    effect    = "Allow"
-    actions   = ["SNS:Publish"]
-    resources = [aws_sns_topic.backup[each.key].arn]
+  backup_vault_name   = module.copy_vault[each.key].name
+  sns_topic_arn       = aws_sns_topic.backup[coalesce(each.value.region, local.primary_region)].arn
+  backup_vault_events = var.notification_events
 
-    principals {
-      type        = "Service"
-      identifiers = ["cloudwatch.amazonaws.com"]
-    }
+  depends_on = [aws_sns_topic_policy.backup]
+}
 
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
-  }
-
-  statement {
-    sid       = "DenyInsecureTransport"
-    effect    = "Deny"
-    actions   = ["SNS:Publish"]
-    resources = [aws_sns_topic.backup[each.key].arn]
-
-    principals {
-      type        = "AWS"
-      identifiers = ["*"]
-    }
-
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
+locals {
+  sns_topic_policy = {
+    for r in local.managed_regions : r => jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        for svc in ["backup.amazonaws.com", "events.amazonaws.com", "cloudwatch.amazonaws.com"] : {
+          Sid       = "Allow${replace(title(split(".", svc)[0]), "-", "")}Publish"
+          Effect    = "Allow"
+          Principal = { Service = svc }
+          Action    = "SNS:Publish"
+          Resource  = "arn:${local.partition}:sns:${r}:${local.account_id}:${var.name}-events"
+          Condition = {
+            StringEquals = { "aws:SourceAccount" = local.account_id }
+          }
+        }
+      ]
+    })
   }
 }
 
@@ -104,7 +159,7 @@ resource "aws_sns_topic_policy" "backup" {
   region = each.key
 
   arn    = aws_sns_topic.backup[each.key].arn
-  policy = data.aws_iam_policy_document.sns[each.key].json
+  policy = local.sns_topic_policy[each.key]
 }
 
 resource "aws_sns_topic_subscription" "backup" {

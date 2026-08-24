@@ -65,6 +65,9 @@ variable "rules" {
     enable_continuous_backup  = optional(bool, false)
     recovery_point_tags       = optional(map(string), {})
 
+    # See the validation below.
+    acknowledge_continuous_backup_copy = optional(bool, false)
+
     retention = object({
       delete_after                              = number
       cold_storage_after                        = optional(number)
@@ -73,10 +76,15 @@ variable "rules" {
 
     copy_to = optional(list(string), [])
 
+    # Attributes are optional with NO default, so an unset field stays null and
+    # is distinguishable from an explicit false. That is what lets an override
+    # be merged field by field over `retention` instead of replacing it
+    # wholesale -- a partial override that silently dropped cold_storage_after
+    # would keep a seven-year copy in warm storage.
     copy_retention = optional(map(object({
-      delete_after                              = number
+      delete_after                              = optional(number)
       cold_storage_after                        = optional(number)
-      opt_in_to_archive_for_supported_resources = optional(bool, false)
+      opt_in_to_archive_for_supported_resources = optional(bool)
     })), {})
   }))
 
@@ -134,6 +142,11 @@ variable "rules" {
 
   # AWS Backup rejects a lifecycle whose cold-storage transition is less than 90 days
   # before expiry, because the archive tier has a 90-day minimum charge.
+  #
+  # Checked against the EFFECTIVE lifecycle of each copy -- the override merged
+  # field by field over the rule's own retention -- because that is what AWS
+  # will actually be asked to apply. Validating the override in isolation would
+  # miss a partial override that inherits an incompatible cold_storage_after.
   validation {
     condition = alltrue(flatten([
       for r in var.rules : concat(
@@ -143,18 +156,20 @@ variable "rules" {
         ],
         [
           for c in values(r.copy_retention) :
-          c.cold_storage_after == null || c.delete_after >= c.cold_storage_after + 90
+          (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) == null ||
+          coalesce(c.delete_after, r.retention.delete_after) >=
+          (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) + 90
         ],
       )
     ]))
-    error_message = "delete_after must be at least 90 days after cold_storage_after, for the rule lifecycle and every copy_retention override."
+    error_message = "delete_after must be at least 90 days after cold_storage_after, for the rule lifecycle and for every copy destination's effective lifecycle."
   }
 
   validation {
     condition = alltrue(flatten([
       for r in var.rules : concat(
         [r.retention.delete_after >= 1],
-        [for c in values(r.copy_retention) : c.delete_after >= 1],
+        [for c in values(r.copy_retention) : coalesce(c.delete_after, r.retention.delete_after) >= 1],
       )
     ]))
     error_message = "Every delete_after must be at least 1 day."
@@ -179,19 +194,34 @@ variable "rules" {
         ],
         [
           for c in values(r.copy_retention) :
-          !c.opt_in_to_archive_for_supported_resources || c.cold_storage_after != null
+          !(c.opt_in_to_archive_for_supported_resources != null
+            ? c.opt_in_to_archive_for_supported_resources
+          : r.retention.opt_in_to_archive_for_supported_resources) ||
+          (c.cold_storage_after != null ? c.cold_storage_after : r.retention.cold_storage_after) != null
         ],
       )
     ]))
-    error_message = "opt_in_to_archive_for_supported_resources requires cold_storage_after to be set on the same lifecycle."
+    error_message = "opt_in_to_archive_for_supported_resources requires cold_storage_after to be set on the same effective lifecycle."
   }
 
   validation {
     condition = alltrue([
       for r in var.rules :
-      r.start_window_minutes >= 60 && r.completion_window_minutes >= r.start_window_minutes
+      r.start_window_minutes >= 60 && r.completion_window_minutes > r.start_window_minutes
     ])
-    error_message = "start_window_minutes must be at least 60, and completion_window_minutes must be greater than or equal to it."
+    error_message = "start_window_minutes must be at least 60, and completion_window_minutes must be strictly greater than it (AWS rejects an equal completion window)."
+  }
+
+  # AWS Backup's support for copying CONTINUOUS recovery points is limited by
+  # resource type, and where it is unsupported the copy job fails nightly --
+  # exactly the run-time failure class the rest of these validations exist to
+  # move to plan time. Requiring an explicit opt-in keeps it a decision.
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      !r.enable_continuous_backup || length(r.copy_to) == 0 || r.acknowledge_continuous_backup_copy
+    ])
+    error_message = "A rule with enable_continuous_backup and copy_to must set acknowledge_continuous_backup_copy = true: cross-Region and cross-account copy of continuous recovery points is only supported for some resource types, and fails at job time for the rest."
   }
 
   # A copy_retention key that names no destination is almost always a typo that
@@ -271,6 +301,12 @@ variable "copy_destinations" {
     }), {})
     lock_min_retention_days = optional(number)
     lock_max_retention_days = optional(number)
+
+    # External destinations only: the ARN of the KMS key encrypting the
+    # destination vault. Required for an encrypted cross-account copy -- the
+    # destination key policy delegating to `<source>:root` does not by itself
+    # authorise anything; the source role also needs an IAM allow on that key.
+    kms_key_arn_external = optional(string)
   }))
   default = {}
 
@@ -335,12 +371,20 @@ variable "selection_required_tags" {
 variable "selection_required_tag_patterns" {
   description = <<-EOT
     Tags a resource must carry whose value matches a wildcard, evaluated with `string_like`
-    and AND-ed with selection_required_tags. Use this for an ownership tag whose value varies
-    per team, e.g. { Owner = "*@example.com" }, which enforces that an owner exists and is a
-    corporate address without pinning one mailbox.
+    and AND-ed with selection_required_tags.
+
+    The default enforces that an Owner tag exists and looks like an address. That is
+    deliberate rather than an empty default: the requirement is `ToBackup=true` AND
+    `Owner=<owner@...>`, and a module whose defaults satisfy only half of it reproduces the
+    exact gap it was built to prevent -- just expressed as a missing condition rather than
+    the wrong operator. Narrow it to your own domain, e.g. { Owner = "*@example.com" }.
+
+    Set to {} only if ownership genuinely is not required.
   EOT
   type        = map(string)
-  default     = {}
+  default = {
+    Owner = "*@*"
+  }
 }
 
 variable "selection_excluded_tag_patterns" {
@@ -544,4 +588,88 @@ variable "backup_role_arn" {
   description = "Existing AWS Backup service role to use. Null creates one with the AWS managed policies plus explicit KMS and copy permissions."
   type        = string
   default     = null
+}
+
+###############################################################################
+# Vault access policy passthrough
+#
+# Exposed on the parent because a consumer of this module has no other way to
+# reach the child, and a deny-delete policy with no exemption and no off switch
+# is a lockout rather than a control.
+###############################################################################
+
+variable "enable_deny_delete_policy" {
+  description = "Attach a vault access policy denying recovery point and vault deletion. Defence in depth behind Vault Lock, and the only deletion control in effect during the governance-mode validation window."
+  type        = bool
+  default     = true
+}
+
+variable "deny_delete_principals_except" {
+  description = <<-EOT
+    Principal ARNs exempt from the deny-delete vault policy -- typically a break-glass role.
+    Empty denies every principal.
+
+    Exempt from the POLICY only. Nothing is exempt from Vault Lock, which is the point of it.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "vault_force_destroy" {
+  description = "Allow `terraform destroy` to remove vaults that still hold recovery points. False everywhere that matters; a committed compliance lock refuses regardless."
+  type        = bool
+  default     = false
+}
+
+variable "acknowledge_unchecked_copy_destinations" {
+  description = <<-EOT
+    Permit copy destinations whose Vault Lock retention window was not declared.
+
+    The plan-time retention check is this module's headline guarantee, and for an EXTERNAL
+    destination it can only run if the caller supplies `lock_min_retention_days` /
+    `lock_max_retention_days` -- the module cannot read a Vault Lock in another account.
+
+    Left false so that omitting them is an error rather than a silent skip. Failing open
+    with no signal is the wrong default for a guardrail, and the cross-account hop is both
+    the destination an operator has least visibility into and the one most likely to carry
+    a stricter compliance lock.
+
+    Set true to accept the gap knowingly; `unchecked_copy_destinations` names them either way.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "audit_scope_tag" {
+  description = <<-EOT
+    Single tag key/value the Audit Manager framework scopes its coverage control to.
+
+    Null derives it from `selection_required_tags` when that holds exactly one entry, and
+    omits the scope otherwise. AWS's ControlScope accepts at most one tag, so the module
+    cannot simply pass the whole selection through -- and the pattern-matched tags
+    (`selection_required_tag_patterns`) are not expressible in a scope at all.
+
+    The consequence is worth knowing: the framework's scope is necessarily WIDER than the
+    plan's selection, so resources deliberately excluded for lacking an Owner tag will be
+    reported as unprotected. Narrow this, or accept the finding as the signal that those
+    resources need an owner.
+  EOT
+  type        = map(string)
+  default     = null
+
+  validation {
+    condition     = var.audit_scope_tag == null || length(var.audit_scope_tag) == 1
+    error_message = "audit_scope_tag must contain exactly one tag; the AWS ControlScope API accepts no more."
+  }
+}
+
+variable "restore_time_target_minutes" {
+  description = "RTO target, in MINUTES, asserted by the Audit Manager restore-time control. Default is 12 hours."
+  type        = number
+  default     = 720
+
+  validation {
+    condition     = var.restore_time_target_minutes >= 1
+    error_message = "restore_time_target_minutes must be at least 1."
+  }
 }

@@ -91,6 +91,21 @@ jobs:
           quiet: true
           soft_fail: false
 
+  python:
+    name: lambda unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # No boto3 and no credentials: the rule's decision logic takes its AWS access
+      # through injected callables precisely so it is testable without them.
+      - run: |
+          python -m unittest discover \
+            -s lambdas/kms-rotation-compliance/tests \
+            -t lambdas/kms-rotation-compliance -v
+
   confidentiality:
     name: no client identifiers
     runs-on: ubuntu-latest

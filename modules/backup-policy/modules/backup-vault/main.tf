@@ -1,19 +1,34 @@
 ###############################################################################
 # One backup vault: the KMS key that encrypts it, the WORM lock that protects
-# its recovery points, the access policy that says who may write into it, and
-# the notification wiring.
+# its recovery points, and the access policy that says who may write into it.
 #
 # Kept as a leaf module because Terraform cannot iterate over provider
 # configurations. Composing this module N times is the only way to express
 # "the same vault, in a different place" without copy-pasting a KMS key, a
 # lock and a policy per location -- which is what the naive shape of this
-# module ends up doing.
+# module ends up doing, and those copies then drift.
+#
+# Policies are built with jsonencode rather than aws_iam_policy_document on
+# purpose. A `terraform test` running against a mocked provider cannot compute
+# a data source, so policy documents built that way render as an empty
+# placeholder and every statement in them goes untested. These are the
+# security-carrying part of the module; they are worth being able to assert on.
 ###############################################################################
+
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
+data "aws_region" "current" {}
 
 locals {
   # `region = null` inherits the provider's Region, which is what the AWS
   # provider does with an unset region argument anyway.
-  region = var.region
+  region        = var.region
+  actual_region = coalesce(var.region, data.aws_region.current.region)
+
+  account_id = data.aws_caller_identity.current.account_id
+  partition  = data.aws_partition.current.partition
 
   is_compliance_lock = var.lock.enabled && var.lock.mode == "compliance"
 
@@ -24,11 +39,29 @@ locals {
   kms_key_arn = var.create_kms_key ? aws_kms_key.this[0].arn : var.kms_key_arn
 
   tags = merge(var.tags, { BackupVault = var.name })
+
+  source_account_arns = [
+    for a in var.source_account_ids : "arn:${local.partition}:iam::${a}:root"
+  ]
+
+  # Guard list for the cross-account statements. A `cond ? [] : [a, b]` ternary
+  # cannot be used here: HCL requires both branches of a conditional to have the
+  # same type, and an empty tuple never matches a two-element one.
+  cross_account = length(var.source_account_ids) > 0 ? [1] : []
+
+  # AWS Backup's service-principal name in kms:ViaService is Region-qualified.
+  backup_via_service = "backup.${local.actual_region}.amazonaws.com"
+
+  kms_data_plane_actions = [
+    "kms:Decrypt",
+    "kms:DescribeKey",
+    "kms:Encrypt",
+    "kms:GenerateDataKey",
+    "kms:GenerateDataKeyWithoutPlaintext",
+    "kms:ReEncryptFrom",
+    "kms:ReEncryptTo",
+  ]
 }
-
-data "aws_caller_identity" "current" {}
-
-data "aws_partition" "current" {}
 
 ###############################################################################
 # Encryption
@@ -37,99 +70,90 @@ data "aws_partition" "current" {}
 # the destination, so each vault owns its key rather than sharing one.
 ###############################################################################
 
-data "aws_iam_policy_document" "kms" {
-  count = var.create_kms_key ? 1 : 0
+locals {
+  kms_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      [
+        # Without this the key is unmanageable: KMS rejects a policy that locks
+        # out every principal, and IAM policies in this account cannot grant
+        # access to a key whose own policy does not delegate to the account.
+        {
+          Sid       = "EnableAccountIAMPolicies"
+          Effect    = "Allow"
+          Principal = { AWS = "arn:${local.partition}:iam::${local.account_id}:root" }
+          Action    = "kms:*"
+          Resource  = "*"
+        },
+        {
+          Sid       = "AllowAWSBackupService"
+          Effect    = "Allow"
+          Principal = { Service = "backup.amazonaws.com" }
+          Action    = local.kms_data_plane_actions
+          Resource  = "*"
+          # Confused-deputy guard: AWS Backup may use this key only when acting
+          # for an account we expect. IfExists so that an interaction which does
+          # not populate the key is not denied outright -- a plain StringEquals
+          # on an absent context key evaluates false and would break the copy.
+          Condition = {
+            StringEqualsIfExists = {
+              "aws:SourceAccount" = concat([local.account_id], var.source_account_ids)
+            }
+          }
+        },
+        {
+          Sid       = "AllowAWSBackupGrants"
+          Effect    = "Allow"
+          Principal = { Service = "backup.amazonaws.com" }
+          Action    = "kms:CreateGrant"
+          Resource  = "*"
+          Condition = {
+            Bool = { "kms:GrantIsForAWSResource" = "true" }
+          }
+        },
+      ],
 
-  # Without this the key is unmanageable: KMS refuses a policy that locks out
-  # every principal, and IAM policies in the account cannot grant access to a
-  # key whose own policy does not delegate to the account.
-  statement {
-    sid       = "EnableAccountIAMPolicies"
-    effect    = "Allow"
-    actions   = ["kms:*"]
-    resources = ["*"]
-
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
-    }
-  }
-
-  statement {
-    sid    = "AllowAWSBackupService"
-    effect = "Allow"
-    actions = [
-      "kms:Decrypt",
-      "kms:DescribeKey",
-      "kms:Encrypt",
-      "kms:GenerateDataKey",
-      "kms:GenerateDataKeyWithoutPlaintext",
-      "kms:ReEncryptFrom",
-      "kms:ReEncryptTo",
-    ]
-    resources = ["*"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["backup.amazonaws.com"]
-    }
-
-    # Confused-deputy guard: AWS Backup may use this key only when acting for an
-    # account we expect, not for an arbitrary third party that names our key ARN.
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = concat([data.aws_caller_identity.current.account_id], var.source_account_ids)
-    }
-  }
-
-  statement {
-    sid       = "AllowAWSBackupGrants"
-    effect    = "Allow"
-    actions   = ["kms:CreateGrant"]
-    resources = ["*"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["backup.amazonaws.com"]
-    }
-
-    condition {
-      test     = "Bool"
-      variable = "kms:GrantIsForAWSResource"
-      values   = ["true"]
-    }
-  }
-
-  # Cross-account copy: the SOURCE account's backup role calls KMS in this
-  # account to write the copy. Without this the copy job fails with AccessDenied
-  # on the destination key, which is the single most common cause of a
-  # cross-account copy that silently never lands.
-  dynamic "statement" {
-    for_each = length(var.source_account_ids) > 0 ? [1] : []
-
-    content {
-      sid    = "AllowSourceAccountsToCopyIn"
-      effect = "Allow"
-      actions = [
-        "kms:Decrypt",
-        "kms:DescribeKey",
-        "kms:Encrypt",
-        "kms:GenerateDataKey",
-        "kms:GenerateDataKeyWithoutPlaintext",
-        "kms:ReEncryptFrom",
-        "kms:ReEncryptTo",
-        "kms:CreateGrant",
-      ]
-      resources = ["*"]
-
-      principals {
-        type        = "AWS"
-        identifiers = [for a in var.source_account_ids : "arn:${data.aws_partition.current.partition}:iam::${a}:root"]
-      }
-
-    }
-  }
+      # Cross-account copy: the SOURCE account's backup role calls KMS in THIS
+      # account to write the copy. Without this the copy job fails with
+      # AccessDenied on the destination key -- the single most common reason a
+      # cross-account copy silently never lands.
+      #
+      # Scoped hard. Granting an external account unconditional data-plane
+      # access to this key would hand an attacker holding admin in the source
+      # account the ability to read everything in the isolated vault, which is
+      # the exact failure this account boundary exists to prevent.
+      [
+        for _ in local.cross_account : {
+          Sid       = "AllowSourceAccountsToCopyIn"
+          Effect    = "Allow"
+          Principal = { AWS = local.source_account_arns }
+          Action    = local.kms_data_plane_actions
+          Resource  = "*"
+          Condition = {
+            StringEquals = {
+              "kms:ViaService"    = local.backup_via_service
+              "kms:CallerAccount" = var.source_account_ids
+            }
+          }
+        }
+      ],
+      [
+        for _ in local.cross_account : {
+          Sid       = "AllowSourceAccountsToGrantForAWSResources"
+          Effect    = "Allow"
+          Principal = { AWS = local.source_account_arns }
+          Action    = "kms:CreateGrant"
+          Resource  = "*"
+          Condition = {
+            Bool = { "kms:GrantIsForAWSResource" = "true" }
+            StringEquals = {
+              "kms:CallerAccount" = var.source_account_ids
+            }
+          }
+        }
+      ],
+    )
+  })
 }
 
 resource "aws_kms_key" "this" {
@@ -139,7 +163,7 @@ resource "aws_kms_key" "this" {
   description             = "Encrypts AWS Backup vault ${var.name}"
   deletion_window_in_days = var.kms_deletion_window_in_days
   enable_key_rotation     = var.kms_enable_key_rotation
-  policy                  = data.aws_iam_policy_document.kms[0].json
+  policy                  = local.kms_policy
   tags                    = local.tags
 }
 
@@ -160,7 +184,7 @@ resource "aws_backup_vault" "this" {
 
   name          = var.name
   kms_key_arn   = local.kms_key_arn
-  force_destroy = false
+  force_destroy = var.force_destroy
   tags          = local.tags
 
   lifecycle {
@@ -212,88 +236,68 @@ resource "aws_backup_vault_lock_configuration" "this" {
   }
 }
 
-data "aws_iam_policy_document" "vault" {
-  count = var.enable_deny_delete_policy || length(var.source_account_ids) > 0 ? 1 : 0
+locals {
+  create_vault_policy = var.enable_deny_delete_policy || length(var.source_account_ids) > 0
 
-  # Cross-account copy destinations must name the source accounts explicitly.
-  dynamic "statement" {
-    for_each = length(var.source_account_ids) > 0 ? [1] : []
-
-    content {
-      sid       = "AllowSourceAccountsToCopyIn"
-      effect    = "Allow"
-      actions   = ["backup:CopyIntoBackupVault"]
-      resources = ["*"]
-
-      principals {
-        type        = "AWS"
-        identifiers = [for a in var.source_account_ids : "arn:${data.aws_partition.current.partition}:iam::${a}:root"]
-      }
-    }
-  }
-
-  dynamic "statement" {
-    for_each = var.enable_deny_delete_policy ? [1] : []
-
-    content {
-      sid    = "DenyDeletion"
-      effect = "Deny"
-      actions = [
-        "backup:DeleteRecoveryPoint",
-        "backup:UpdateRecoveryPointLifecycle",
-        "backup:DeleteBackupVault",
-        "backup:DeleteBackupVaultLockConfiguration",
-        "backup:DeleteBackupVaultAccessPolicy",
-        "backup:PutBackupVaultAccessPolicy",
-      ]
-      resources = ["*"]
-
-      principals {
-        type        = "AWS"
-        identifiers = ["*"]
-      }
-
-      dynamic "condition" {
-        for_each = length(var.deny_delete_principals_except) > 0 ? [1] : []
-
-        content {
-          test     = "ArnNotLike"
-          variable = "aws:PrincipalArn"
-          values   = var.deny_delete_principals_except
+  vault_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      # Cross-account copy destinations must name the source accounts explicitly.
+      [
+        for _ in local.cross_account : {
+          Sid       = "AllowSourceAccountsToCopyIn"
+          Effect    = "Allow"
+          Principal = { AWS = local.source_account_arns }
+          Action    = "backup:CopyIntoBackupVault"
+          Resource  = "*"
         }
-      }
-    }
-  }
+      ],
+
+      # Defence in depth behind Vault Lock.
+      #
+      # Note what is NOT denied here: backup:PutBackupVaultAccessPolicy and
+      # backup:DeleteBackupVaultAccessPolicy. Denying those with Principal "*"
+      # makes the policy unmodifiable and unremovable by the very role that
+      # created it -- so the vault can never be updated to add a source account
+      # or a break-glass exemption, and `terraform destroy` can never succeed.
+      # A policy that cannot be corrected is a lockout, not a control; Vault
+      # Lock is what provides the tamper-proof guarantee.
+      [
+        for _ in(var.enable_deny_delete_policy ? [1] : []) : merge(
+          {
+            Sid    = "DenyRecoveryPointDeletion"
+            Effect = "Deny"
+            Principal = {
+              AWS = "*"
+            }
+            Action = [
+              "backup:DeleteRecoveryPoint",
+              "backup:UpdateRecoveryPointLifecycle",
+              "backup:DeleteBackupVault",
+              "backup:DeleteBackupVaultLockConfiguration",
+            ]
+            Resource = "*"
+          },
+          length(var.deny_delete_principals_except) == 0 ? {} : {
+            Condition = {
+              ArnNotLike = { "aws:PrincipalArn" = var.deny_delete_principals_except }
+            }
+          },
+        )
+      ],
+    )
+  })
 }
 
 resource "aws_backup_vault_policy" "this" {
-  count  = var.enable_deny_delete_policy || length(var.source_account_ids) > 0 ? 1 : 0
+  count  = local.create_vault_policy ? 1 : 0
   region = local.region
 
   backup_vault_name = aws_backup_vault.this.name
-  policy            = data.aws_iam_policy_document.vault[0].json
-}
+  policy            = local.vault_policy
 
-###############################################################################
-# Notifications
-#
-# Vault notifications are Region- and account-local: the topic must live beside
-# the vault. The parent module therefore creates one topic per location rather
-# than fanning every vault into a single topic.
-###############################################################################
-
-resource "aws_backup_vault_notifications" "this" {
-  count  = var.enable_notifications ? 1 : 0
-  region = local.region
-
-  lifecycle {
-    precondition {
-      condition     = var.notification_sns_topic_arn != null
-      error_message = "notification_sns_topic_arn is required when enable_notifications is true."
-    }
-  }
-
-  backup_vault_name   = aws_backup_vault.this.name
-  sns_topic_arn       = var.notification_sns_topic_arn
-  backup_vault_events = var.notification_events
+  # Destroy ordering. The policy denies DeleteBackupVaultLockConfiguration, so
+  # if Terraform removed the lock before the policy the call would be denied.
+  # This edge makes the policy tear down first.
+  depends_on = [aws_backup_vault_lock_configuration.this]
 }

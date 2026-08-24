@@ -22,19 +22,35 @@ resource "aws_backup_framework" "this" {
   description = "Continuously evaluated controls for the ${var.name} backup policy"
   tags        = local.tags
 
-  # SELECTION: every resource carrying the mandated tags is covered by a plan.
+  # SELECTION: every resource carrying the mandated tag is covered by a plan.
   # This is the control that catches the gap between "the plan exists" and "the
   # plan protects what it is supposed to".
+  #
+  # The scope carries at most ONE tag: that is the AWS ControlScope limit, not a
+  # simplification. It also cannot express the pattern-matched tags, so the
+  # framework's scope is necessarily WIDER than the plan's selection -- a
+  # resource tagged ToBackup=true but with no Owner is deliberately excluded from
+  # the plan and will be reported here as unprotected. That finding is correct:
+  # the resource needs an owner. See the audit_scope_tag variable.
   control {
     name = "BACKUP_RESOURCES_PROTECTED_BY_BACKUP_PLAN"
 
-    scope {
-      tags = var.selection_required_tags
+    dynamic "scope" {
+      for_each = local.audit_scope_tag == null ? [] : [local.audit_scope_tag]
+
+      content {
+        tags = scope.value
+      }
     }
   }
 
   # FREQUENCY and RETENTION: plans run at least as often, and keep at least as
   # long, as policy requires.
+  #
+  # Both parameters are derived from the configured rules. Hardcoding a daily
+  # frequency would report a plan whose shortest tier is weekly as permanently
+  # non-compliant -- a standing false positive that teaches the operator to
+  # ignore the framework, which is worse than not deploying it.
   control {
     name = "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK"
 
@@ -45,12 +61,12 @@ resource "aws_backup_framework" "this" {
 
     input_parameter {
       name  = "requiredFrequencyValue"
-      value = "1"
+      value = tostring(local.longest_schedule_gap_days)
     }
 
     input_parameter {
       name  = "requiredRetentionDays"
-      value = tostring(min([for r in var.rules : r.retention.delete_after]...))
+      value = tostring(local.shortest_retention_days)
     }
   }
 
@@ -60,7 +76,7 @@ resource "aws_backup_framework" "this" {
 
     input_parameter {
       name  = "requiredRetentionDays"
-      value = tostring(min([for r in var.rules : r.retention.delete_after]...))
+      value = tostring(local.shortest_retention_days)
     }
   }
 
@@ -69,26 +85,48 @@ resource "aws_backup_framework" "this" {
     name = "BACKUP_RECOVERY_POINT_ENCRYPTED"
   }
 
-  # WORM.
+  # WORM. Both controls, because they check different things and the module's
+  # whole thesis is that only the first of them is load-bearing:
+  #   ..._BACKUP_VAULT_LOCK      evaluates Vault Lock itself
+  #   ..._MANUAL_DELETION_DISABLED  evaluates the vault ACCESS POLICY, which an
+  #                                 administrator can remove
+  # Auditing only the second would be auditing the weaker control.
+  control {
+    name = "BACKUP_RESOURCES_PROTECTED_BY_BACKUP_VAULT_LOCK"
+  }
+
   control {
     name = "BACKUP_RECOVERY_POINT_MANUAL_DELETION_DISABLED"
   }
 
-  # CROSS-REGION COPY.
+  # CROSS-REGION COPY. Pinned to the Regions this module actually copies to.
+  # Without the parameter the control passes for a copy to ANY Region, including
+  # one nobody intended -- which makes it a check that the feature is on rather
+  # than a check that the policy is met.
   dynamic "control" {
     for_each = length(local.managed_destinations) > 0 ? [1] : []
 
     content {
       name = "BACKUP_RESOURCES_PROTECTED_BY_CROSS_REGION"
+
+      input_parameter {
+        name  = "crossRegionList"
+        value = join(",", local.copy_destination_regions)
+      }
     }
   }
 
-  # CROSS-ACCOUNT COPY.
+  # CROSS-ACCOUNT COPY. Pinned to the destination accounts, for the same reason.
   dynamic "control" {
-    for_each = length(local.external_destinations) > 0 ? [1] : []
+    for_each = length(local.external_destination_account_ids) > 0 ? [1] : []
 
     content {
       name = "BACKUP_RESOURCES_PROTECTED_BY_CROSS_ACCOUNT"
+
+      input_parameter {
+        name  = "crossAccountList"
+        value = join(",", local.external_destination_account_ids)
+      }
     }
   }
 
@@ -100,8 +138,10 @@ resource "aws_backup_framework" "this" {
       name = "RESTORE_TIME_FOR_RESOURCES_MEET_TARGET"
 
       input_parameter {
-        name  = "maxRestoreTime"
-        value = "720"
+        name = "maxRestoreTime"
+        # MINUTES, not hours. The default is 12 hours; a reader who assumes
+        # hours here would be setting a 30-day RTO target.
+        value = tostring(var.restore_time_target_minutes)
       }
     }
   }
