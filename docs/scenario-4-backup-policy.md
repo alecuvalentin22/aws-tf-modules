@@ -300,9 +300,18 @@ Two things drive most of the bill and most of the available savings:
   and monthlies would roughly double the cross-account line for very little assurance
   gain. That is the trade-off in decision 2.
 - **Cold storage on the long tier.** The seven-year tier is the largest by volume, and
-  the 90-day transition is what makes it affordable. Note the AWS constraint the module
-  enforces: `delete_after` must be at least 90 days after `cold_storage_after`, because
-  the archive tier has a 90-day minimum charge, deleting earlier costs *more*.
+  the 90-day transition is what makes it affordable. Two AWS constraints shape it. The
+  module enforces the first: `delete_after` must be at least 90 days after
+  `cold_storage_after`, because the archive tier has a 90-day minimum charge, so
+  deleting earlier costs *more*.
+
+  The second it cannot enforce, and it is the one that breaks the arithmetic above. Cold
+  storage applies to some resource types and not others: EBS, EFS, DynamoDB, Timestream
+  and VMware tier, while RDS, Aurora, DocumentDB, Neptune, FSx and EC2 do not. Against
+  `resources = ["*"]` the untiered types stay in warm storage for the full seven years at
+  roughly five times the modelled cost, with nothing in the plan, the console or the bill
+  to attribute it. Price the long tier against the real resource mix rather than against
+  this table, and if the estate is mostly RDS, shorten it.
 
 Restore testing is close to free relative to the storage and is the highest-value line
 item here.

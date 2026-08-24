@@ -98,15 +98,15 @@ The highest return per unit of effort and cost:
                                |
         +--------------+-------+--------+--------------+
         v              v                v              v
-   RDS Multi-AZ   ElastiCache      S3 (artifacts,   EFS or EBS
+   RDS Multi-AZ   ElastiCache      S3 (artifacts,   EBS gp3
    (+ RDS Proxy)  Redis Multi-AZ    LFS, registry,  (repos only)
                                     uploads, backups)
 ```
 
 Changes from today:
 
-- **ASG of one across three AZs** - instance failure or AZ failure triggers an
-  automatic rebuild in a surviving AZ.
+- **ASG of one across three AZs** - instance failure triggers an automatic rebuild.
+  AZ failure relaunches too, with the repository-volume caveat below.
 - **Object data to S3** - artifacts, LFS, uploads, the container registry and backups
   move off EBS. This removes most of the disk-full risk and most of the data at risk
   on the zonal volume.
@@ -119,13 +119,19 @@ Changes from today:
 | --- | --- | --- |
 | RTO | Hours (manual rebuild) | **~10 minutes** (ASG replacement) |
 | RPO | Undefined | **~1 hour** |
-| AZ failure | Total outage | Automatic recovery |
+| AZ failure | Total outage | ASG relaunches, but see the caveat below |
 | Cost | 1x | **~1.6x** |
 
-Git repositories remain the one stateful thing on the instance, so repository recovery
-still depends on snapshot restore, but the blast radius has shrunk from "everything"
-to "repositories only", and the split-brain risk is contained to a single pair of
-timelines rather than four.
+One caveat has to be stated plainly, because it is the limit of this option. Git
+repositories stay on a zonal EBS volume, so on an AZ failure the ASG relaunches in a
+surviving AZ and **cannot attach that volume**. Recovery there is snapshot-restore time,
+not ten minutes. The ten-minute figure holds for instance failure inside a healthy AZ,
+which is the more common event, and the blast radius has shrunk from "everything" to
+"repositories only" because the object data has moved to S3.
+
+Getting AZ failure down to minutes as well means replicated repository storage, which is
+Option B. And do not reach for EFS to work around it: GitLab advises against EFS for
+repositories, and the file-locking and latency behaviour causes corruption under load.
 
 ### Option B - GitLab 3K reference architecture (full HA)
 
@@ -203,18 +209,23 @@ is the actual user journey.
 
 ### 2. Health endpoint choice - a real trap
 
-GitLab's documentation **warns explicitly against using `/-/health` (`/health_check`)
-for load balancer health checks**. It fails whenever any backend dependency is slow,
-so a transient database slowdown pulls every healthy node out of the pool and turns a
-degradation into an outage.
+The three endpoints check different depths, and picking on the wrong axis is how a
+load balancer turns a small problem into an outage.
 
-| Endpoint | Use |
-| --- | --- |
-| `/-/readiness` | **ALB target group health check** |
-| `/-/liveness` | Process liveness only |
-| `/-/health` | **Not for load balancing** |
+| Endpoint | What it checks | Use for |
+| --- | --- | --- |
+| `/-/liveness` | The application server is up | Process liveness |
+| `/-/health` | The application server is up. It does **not** verify the database or other services | A shallow check; will keep a node in rotation that cannot serve |
+| `/-/readiness` | The application is ready to serve | **ALB target group health check** |
+| `/-/readiness?all=1` | Readiness plus every dependent service | Deep diagnostics, **not** the load balancer |
 
-Getting this wrong makes the load balancer an amplifier of small problems.
+Use `/-/readiness` for the target group. The trap is `?all=1`: it probes every
+dependency, so a transient database slowdown fails the check on every healthy node at
+once and the load balancer drains the entire pool. The failure is correlated by
+construction, which is exactly what you do not want from a health check.
+
+`/-/health` errs the other way. It will report healthy on a node whose database
+connection is gone, so traffic keeps arriving at an instance that cannot answer.
 
 ### 3. Sidekiq queue latency - the earliest predictive signal available
 

@@ -274,8 +274,16 @@ presented in.
 Make the API `PRIVATE`, as in Q2. The regional `execute-api` endpoint ceases to exist.
 There is no bypass to block because there is no endpoint to reach.
 
-Every option below is a mitigation for the case where this is not yet done. They
-should be treated as transitional, with a date attached.
+There is also a cheaper version of the same idea that does not require going private.
+A REGIONAL API with a custom domain can set **`disable_execute_api_endpoint = true`**,
+which switches off the default `{api-id}.execute-api.{region}.amazonaws.com` hostname
+while the API stays reachable through the custom domain. The bypass target stops
+existing without the migration; the API is still regional and still public at its custom
+domain, so the edge protections still have to be enforced somewhere. It is the right
+first move on any API that already has a custom domain, and it takes one argument.
+
+Every option below is a mitigation for the case where neither has been done. They should
+be treated as transitional, with a date attached.
 
 ### Tier 2 - Shared secret header + regional WAF default-deny
 
@@ -326,6 +334,7 @@ Assume a bypass will eventually work and make it visible:
 | Tier | Control | Strength | Effort |
 | --- | --- | --- | --- |
 | 1 | Private API + PrivateLink | **Structural** - no endpoint to bypass | Medium |
+| 1b | `disable_execute_api_endpoint` on a regional API with a custom domain | Structural for the default hostname; the custom domain stays public | **Very low** |
 | 2 | Secret header + WAF default-deny | Strong while the secret holds | Low |
 | 3 | CloudFront prefix-list resource policy | Weak alone - proves "a" distribution, not ours | Low |
 | 4 | Bypass detection and alarming | Detective, not preventive | Low |

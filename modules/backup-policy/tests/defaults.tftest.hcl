@@ -150,6 +150,19 @@ run "staleness_alarm_treats_silence_as_failure" {
     condition     = aws_cloudwatch_metric_alarm.job_failed[0].treat_missing_data == "notBreaching"
     error_message = "Absence of failures is the good case for the failure alarm."
   }
+
+  # Undimensioned, both alarms would match every backup job in the account, so
+  # in an estate with several plans they would fire on another team's failure
+  # and stay quiet on this plan going dark.
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.stale[0].dimensions["BackupVaultName"] != null
+    error_message = "The staleness alarm must be scoped to this module's vault."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.job_failed[0].dimensions["BackupVaultName"] != null
+    error_message = "The failure alarm must be scoped to this module's vault."
+  }
 }
 
 run "one_notification_topic_per_region" {

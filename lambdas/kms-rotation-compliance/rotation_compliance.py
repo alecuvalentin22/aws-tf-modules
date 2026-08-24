@@ -265,6 +265,147 @@ def _make_key_readers(client):
     return describe_key, list_key_rotations
 
 
+def configuration_of(item: dict) -> dict:
+    """The resource configuration, however Config chose to hand it over.
+
+    A change-triggered event carries a dict; batch_get_resource_config returns the same
+    thing serialised. Both paths reach the same evaluator, so the difference is absorbed
+    here rather than in each caller.
+    """
+    configuration = item.get("configuration", {})
+    if isinstance(configuration, str):
+        return json.loads(configuration)
+    return configuration
+
+
+def chunked(items: list, size: int) -> list[list]:
+    """Split a list into chunks. Config accepts at most 100 evaluations per call."""
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _evaluate_one(item: dict, region: str, kms_role_arn: str | None,
+                  max_age_days: int, now: _dt.datetime) -> tuple[str, str]:
+    """Compliance for a single configuration item."""
+    resource_type = item["resourceType"]
+
+    # A deleted resource must be reported NOT_APPLICABLE, otherwise its last finding
+    # stays in Config forever and the compliance dashboard never goes green again.
+    if item.get("configurationItemStatus") in ("ResourceDeleted", "ResourceDeletedNotRecorded"):
+        return NOT_APPLICABLE, "Resource has been deleted."
+
+    if resource_type not in KEY_PATHS:
+        return NOT_APPLICABLE, f"{resource_type} is not in scope."
+
+    configuration = configuration_of(item)
+
+    client = _kms_client(region, kms_role_arn)
+    describe_key, list_key_rotations = _make_key_readers(client)
+    try:
+        return evaluate_resource(
+            resource_type=resource_type,
+            resource_id=item["resourceId"],
+            configuration=configuration,
+            describe_key=describe_key,
+            list_key_rotations=list_key_rotations,
+            now=now,
+            max_age_days=max_age_days,
+        )
+    except KeyLookupError as exc:
+        return NON_COMPLIANT, str(exc)
+
+
+def _put(evaluations: list[dict], result_token: str) -> None:
+    import boto3
+
+    config = boto3.client("config")
+    for batch in chunked(evaluations, 100):
+        config.put_evaluations(Evaluations=batch, ResultToken=result_token)
+
+
+def _handle_change(invoking_event: dict, event: dict, kms_role_arn: str | None,
+                   max_age_days: int) -> dict:
+    item = invoking_event.get("configurationItem") or invoking_event.get(
+        "configurationItemSummary"
+    )
+    if not item:
+        LOG.info("No configuration item in event; nothing to evaluate.")
+        return {"evaluations": 0}
+
+    region = item.get("awsRegion") or os.environ["AWS_REGION"]
+    now = _dt.datetime.now(_dt.timezone.utc)
+    compliance, annotation = _evaluate_one(item, region, kms_role_arn, max_age_days, now)
+    annotation = annotation[:256]
+
+    LOG.info("%s %s -> %s: %s", item["resourceType"], item["resourceId"], compliance, annotation)
+    _put(
+        [{
+            "ComplianceResourceType": item["resourceType"],
+            "ComplianceResourceId": item["resourceId"],
+            "ComplianceType": compliance,
+            "Annotation": annotation,
+            "OrderingTimestamp": item["configurationItemCaptureTime"],
+        }],
+        event["resultToken"],
+    )
+    return {"evaluations": 1, "compliance": compliance}
+
+
+def _handle_scheduled(invoking_event: dict, event: dict, kms_role_arn: str | None,
+                      max_age_days: int) -> dict:
+    """Sweep every in-scope resource on a schedule.
+
+    Key staleness is a function of the calendar, not of resource change. A bucket that
+    nobody touches for two years generates no configuration item, so a change-triggered
+    rule alone would never re-evaluate it and it would sit COMPLIANT with a key that has
+    long since gone past the policy window. That is the failure the requirement is
+    specifically about, so the periodic path is not optional here.
+    """
+    import boto3
+
+    config = boto3.client("config")
+    region = os.environ["AWS_REGION"]
+    now = _dt.datetime.now(_dt.timezone.utc)
+    ordering = invoking_event.get(
+        "notificationCreationTime", now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    )
+
+    evaluations: list[dict] = []
+    for resource_type in KEY_PATHS:
+        token = None
+        while True:
+            kwargs = {"resourceType": resource_type, "limit": 100}
+            if token:
+                kwargs["nextToken"] = token
+            listed = config.list_discovered_resources(**kwargs)
+
+            identifiers = [
+                {"resourceType": resource_type, "resourceId": r["resourceId"]}
+                for r in listed.get("resourceIdentifiers", [])
+            ]
+            if identifiers:
+                fetched = config.batch_get_resource_config(resourceKeys=identifiers)
+                for item in fetched.get("baseConfigurationItems", []):
+                    compliance, annotation = _evaluate_one(
+                        item, item.get("awsRegion") or region, kms_role_arn, max_age_days, now
+                    )
+                    evaluations.append({
+                        "ComplianceResourceType": item["resourceType"],
+                        "ComplianceResourceId": item["resourceId"],
+                        "ComplianceType": compliance,
+                        "Annotation": annotation[:256],
+                        "OrderingTimestamp": ordering,
+                    })
+
+            token = listed.get("nextToken")
+            if not token:
+                break
+
+    LOG.info("Periodic sweep evaluated %d resources", len(evaluations))
+    if evaluations:
+        _put(evaluations, event["resultToken"])
+    return {"evaluations": len(evaluations)}
+
+
 def lambda_handler(event: dict, context) -> dict:  # noqa: ANN001 - AWS signature
     invoking_event = json.loads(event["invokingEvent"])
     rule_parameters = json.loads(event.get("ruleParameters") or "{}")
@@ -274,59 +415,6 @@ def lambda_handler(event: dict, context) -> dict:  # noqa: ANN001 - AWS signatur
         "KMS_READ_ROLE_ARN"
     )
 
-    item = invoking_event.get("configurationItem") or invoking_event.get(
-        "configurationItemSummary"
-    )
-    if not item:
-        LOG.info("No configuration item in event; nothing to evaluate.")
-        return {"evaluations": 0}
-
-    resource_type = item["resourceType"]
-    resource_id = item["resourceId"]
-    region = item.get("awsRegion") or os.environ["AWS_REGION"]
-
-    # A deleted resource must be reported NOT_APPLICABLE, otherwise its last finding
-    # stays in Config forever and the compliance dashboard never goes green again.
-    status = item.get("configurationItemStatus")
-    if status in ("ResourceDeleted", "ResourceDeletedNotRecorded"):
-        compliance, annotation = NOT_APPLICABLE, "Resource has been deleted."
-    elif resource_type not in KEY_PATHS:
-        compliance, annotation = NOT_APPLICABLE, f"{resource_type} is not in scope."
-    else:
-        now = _dt.datetime.now(_dt.timezone.utc)
-        client = _kms_client(region, kms_role_arn)
-        describe_key, list_key_rotations = _make_key_readers(client)
-        try:
-            compliance, annotation = evaluate_resource(
-                resource_type=resource_type,
-                resource_id=resource_id,
-                configuration=json.loads(item["configuration"])
-                if isinstance(item.get("configuration"), str)
-                else item.get("configuration", {}),
-                describe_key=describe_key,
-                list_key_rotations=list_key_rotations,
-                now=now,
-                max_age_days=max_age_days,
-            )
-        except KeyLookupError as exc:
-            compliance, annotation = NON_COMPLIANT, str(exc)
-
-    # Config truncates annotations at 256 characters.
-    annotation = annotation[:256]
-    LOG.info("%s %s -> %s: %s", resource_type, resource_id, compliance, annotation)
-
-    import boto3
-
-    boto3.client("config").put_evaluations(
-        Evaluations=[
-            {
-                "ComplianceResourceType": resource_type,
-                "ComplianceResourceId": resource_id,
-                "ComplianceType": compliance,
-                "Annotation": annotation,
-                "OrderingTimestamp": item["configurationItemCaptureTime"],
-            }
-        ],
-        ResultToken=event["resultToken"],
-    )
-    return {"evaluations": 1, "compliance": compliance}
+    if invoking_event.get("messageType") == "ScheduledNotification":
+        return _handle_scheduled(invoking_event, event, kms_role_arn, max_age_days)
+    return _handle_change(invoking_event, event, kms_role_arn, max_age_days)

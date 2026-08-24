@@ -345,27 +345,38 @@ purpose operating system.
 
 ### Pin the algorithm in the key policy
 
-Worth calling out as the strongest single control available:
+The wrapping algorithm is chosen when the import parameters are requested, not when the
+material is imported, so the condition belongs on `GetParametersForImport`:
 
 ```json
 {
   "Sid": "DenyWeakImportWrapping",
   "Effect": "Deny",
   "Principal": "*",
-  "Action": "kms:ImportKeyMaterial",
+  "Action": "kms:GetParametersForImport",
   "Resource": "*",
   "Condition": {
     "StringNotEquals": {
-      "kms:WrappingAlgorithm": "RSAES_OAEP_SHA_256"
+      "kms:WrappingAlgorithm": "RSAES_OAEP_SHA_256",
+      "kms:WrappingKeySpec": "RSA_4096"
     }
   }
 }
 ```
 
-This means that even a fully compromised import role cannot quietly downgrade the
-wrapping algorithm. The control is enforced by KMS rather than by the correctness of
-the automation, which is the right place for it. The automation is the thing most
-likely to be compromised.
+Attaching this to `kms:ImportKeyMaterial` instead is a trap worth naming, because it looks
+correct and is not. `kms:WrappingAlgorithm` is not present in an `ImportKeyMaterial`
+request at all, and `StringNotEquals` against an absent context key evaluates to true, so
+the Deny would match every import and stop the ceremony for all thirty keys. The same
+reasoning applies to any condition intended to constrain rather than describe: check which
+request actually carries the key before writing the policy.
+
+`ImportKeyMaterial` has its own conditions worth using, on a separate statement:
+`kms:ExpirationModel` to require `KEY_MATERIAL_DOES_NOT_EXPIRE`, and `kms:ValidTo` if a
+bounded lifetime is ever deliberately chosen.
+
+The value of both is that KMS enforces them rather than the automation, which is the right
+place for the control. The automation is the thing most likely to be compromised.
 
 ### What to reject
 
@@ -404,5 +415,6 @@ through Security Hub, and alarm on rotations that did not happen.
 
 Transport is the part AWS has already solved. Use the import protocol as designed:
 RSA-4096 with `RSAES_OAEP_SHA_256`, wrapping done inside the HSM over PKCS#11 rather than
-with OpenSSL on a laptop, over PrivateLink, with the algorithm pinned in the key policy so
-a compromised import role cannot downgrade it.
+with OpenSSL on a laptop, over PrivateLink, and pin the algorithm with a condition on
+`GetParametersForImport`, which is the request that carries it, so a compromised import
+role cannot downgrade it.

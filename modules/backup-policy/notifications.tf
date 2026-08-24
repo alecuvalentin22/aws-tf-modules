@@ -251,11 +251,20 @@ resource "aws_cloudwatch_metric_alarm" "job_failed" {
 
   region = local.primary_region
 
-  alarm_name          = "${var.name}-backup-jobs-failed"
-  alarm_description   = "One or more AWS Backup jobs failed in the last hour for plan ${var.name}."
-  namespace           = "AWS/Backup"
-  metric_name         = "NumberOfBackupJobsFailed"
-  statistic           = "Sum"
+  alarm_name        = "${var.name}-backup-jobs-failed"
+  alarm_description = "One or more AWS Backup jobs failed in the last hour writing to ${module.primary_vault.name}."
+
+  namespace   = "AWS/Backup"
+  metric_name = "NumberOfBackupJobsFailed"
+  statistic   = "Sum"
+
+  # Scoped to this module's own vault. Undimensioned, the metric covers every
+  # backup job in the account and Region, so in an estate with more than one
+  # plan the alarm would fire on somebody else's failure and stay silent on
+  # nothing at all.
+  dimensions = {
+    BackupVaultName = module.primary_vault.name
+  }
   period              = 3600
   evaluation_periods  = 1
   threshold           = 0
@@ -277,11 +286,15 @@ resource "aws_cloudwatch_metric_alarm" "stale" {
   region = local.primary_region
 
   alarm_name        = "${var.name}-no-successful-backup"
-  alarm_description = "No AWS Backup job has completed successfully in ${var.staleness_alarm_period_hours}h for plan ${var.name}. A plan that stops running produces no failure events, so this is the only alarm that sees it."
+  alarm_description = "No AWS Backup job has completed successfully into ${module.primary_vault.name} in ${var.staleness_alarm_period_hours}h. A plan that stops running produces no failure events, so this is the only alarm that sees it."
 
-  namespace           = "AWS/Backup"
-  metric_name         = "NumberOfBackupJobsCompleted"
-  statistic           = "Sum"
+  namespace   = "AWS/Backup"
+  metric_name = "NumberOfBackupJobsCompleted"
+  statistic   = "Sum"
+
+  dimensions = {
+    BackupVaultName = module.primary_vault.name
+  }
   period              = var.staleness_alarm_period_hours * 3600
   evaluation_periods  = 1
   threshold           = 1

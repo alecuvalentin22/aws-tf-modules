@@ -18,7 +18,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from rotation_compliance import (  # noqa: E402
     COMPLIANT,
     NON_COMPLIANT,
+    NOT_APPLICABLE,
     KeyLookupError,
+    _evaluate_one,
+    chunked,
+    configuration_of,
     days_since,
     evaluate_resource,
     extract_key_reference,
@@ -231,6 +235,68 @@ class EvaluateResource(unittest.TestCase):
         # The handler truncates to 256; this asserts the raw annotation is not so long
         # that truncation would remove the compliance reason itself.
         self.assertLess(len(annotation) - len(long_arn), 200)
+
+
+class Chunking(unittest.TestCase):
+    """Config accepts at most 100 evaluations per PutEvaluations call."""
+
+    def test_splits_at_the_api_limit(self):
+        self.assertEqual([len(c) for c in chunked(list(range(250)), 100)], [100, 100, 50])
+
+    def test_exact_multiple_produces_no_empty_chunk(self):
+        self.assertEqual([len(c) for c in chunked(list(range(200)), 100)], [100, 100])
+
+    def test_empty_input(self):
+        self.assertEqual(chunked([], 100), [])
+
+
+class EvaluateOne(unittest.TestCase):
+    """The per-item path shared by the change-triggered and periodic handlers."""
+
+    def _item(self, **over):
+        item = {
+            "resourceType": "AWS::RDS::DBInstance",
+            "resourceId": "db-1",
+            "configuration": {"kmsKeyId": CMK_ARN},
+            "configurationItemStatus": "OK",
+        }
+        item.update(over)
+        return item
+
+    def test_deleted_resource_is_not_applicable(self):
+        # Otherwise the last finding sits in Config forever and the dashboard
+        # never returns to green.
+        compliance, annotation = _evaluate_one(
+            self._item(configurationItemStatus="ResourceDeleted"),
+            "eu-central-1", None, 365, NOW,
+        )
+        self.assertEqual(compliance, NOT_APPLICABLE)
+        self.assertIn("deleted", annotation)
+
+    def test_out_of_scope_type_is_not_applicable(self):
+        compliance, _ = _evaluate_one(
+            self._item(resourceType="AWS::EC2::Instance"),
+            "eu-central-1", None, 365, NOW,
+        )
+        self.assertEqual(compliance, NOT_APPLICABLE)
+
+    def test_a_serialised_configuration_is_parsed(self):
+        # batch_get_resource_config returns the configuration as a JSON string;
+        # the change-triggered path hands over a dict. Both reach the evaluator.
+        import json as _json
+        self.assertEqual(
+            configuration_of({"configuration": _json.dumps({"kmsKeyId": CMK_ARN})}),
+            {"kmsKeyId": CMK_ARN},
+        )
+
+    def test_a_dict_configuration_passes_through(self):
+        self.assertEqual(
+            configuration_of({"configuration": {"kmsKeyId": CMK_ARN}}),
+            {"kmsKeyId": CMK_ARN},
+        )
+
+    def test_a_missing_configuration_is_empty(self):
+        self.assertEqual(configuration_of({}), {})
 
 
 if __name__ == "__main__":

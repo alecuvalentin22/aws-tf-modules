@@ -39,6 +39,14 @@ variable "rules" {
         delete_after           Days to keep. This is the backup RETENTION.
         cold_storage_after     Days before transition to cold storage. AWS requires
                                delete_after >= cold_storage_after + 90.
+
+                               Cold storage is NOT supported for every resource type.
+                               EBS, EFS, DynamoDB, Timestream and VMware tier; RDS,
+                               Aurora, DocumentDB, Neptune, FSx and EC2 do not. With
+                               `resources = ["*"]` the untiered types stay in warm
+                               storage for the full delete_after at roughly five times
+                               the cost, and nothing in the plan or the console says so.
+                               Check the mix before pricing a long tier.
         opt_in_to_archive_for_supported_resources
                                Use the archive tier where the resource type supports it.
 
