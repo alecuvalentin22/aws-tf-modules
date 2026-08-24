@@ -221,6 +221,19 @@ def evaluate_resource(
 # ---------------------------------------------------------------------------
 
 
+# Clients are cached per (region, role). Without this the periodic sweep builds a
+# client per evaluated resource, which is one sts:AssumeRole per resource: harmless
+# on the handful of keys a change-triggered evaluation sees, and a throttle on any
+# estate large enough to need the sweep.
+#
+# Lambda reuses the execution environment between invocations, so the cache outlives
+# a single run and an assumed-role client would eventually be handed back with expired
+# credentials. Hence the expiry, with a margin so a client cannot expire midway
+# through a sweep that is already in flight.
+_CLIENT_CACHE: dict = {}
+_CREDENTIAL_EXPIRY_MARGIN = _dt.timedelta(minutes=5)
+
+
 def _kms_client(region: str, role_arn: Optional[str]):
     """KMS client, optionally in the Security account where the keys live.
 
@@ -231,20 +244,30 @@ def _kms_client(region: str, role_arn: Optional[str]):
     """
     import boto3  # imported here so the pure logic above stays importable without it
 
-    if not role_arn:
-        return boto3.client("kms", region_name=region)
+    now = _dt.datetime.now(_dt.timezone.utc)
+    client, expires_at = _CLIENT_CACHE.get((region, role_arn), (None, None))
+    if client is not None and (expires_at is None or expires_at > now + _CREDENTIAL_EXPIRY_MARGIN):
+        return client
 
-    sts = boto3.client("sts")
-    creds = sts.assume_role(
-        RoleArn=role_arn, RoleSessionName="config-kms-rotation-compliance"
-    )["Credentials"]
-    return boto3.client(
-        "kms",
-        region_name=region,
-        aws_access_key_id=creds["AccessKeyId"],
-        aws_secret_access_key=creds["SecretAccessKey"],
-        aws_session_token=creds["SessionToken"],
-    )
+    if not role_arn:
+        # The execution role's own credentials are refreshed by the runtime.
+        client, expires_at = boto3.client("kms", region_name=region), None
+    else:
+        sts = boto3.client("sts")
+        creds = sts.assume_role(
+            RoleArn=role_arn, RoleSessionName="config-kms-rotation-compliance"
+        )["Credentials"]
+        client = boto3.client(
+            "kms",
+            region_name=region,
+            aws_access_key_id=creds["AccessKeyId"],
+            aws_secret_access_key=creds["SecretAccessKey"],
+            aws_session_token=creds["SessionToken"],
+        )
+        expires_at = creds["Expiration"]
+
+    _CLIENT_CACHE[(region, role_arn)] = (client, expires_at)
+    return client
 
 
 def _make_key_readers(client):

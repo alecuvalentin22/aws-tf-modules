@@ -11,8 +11,12 @@
 
 A working module implementing the target architecture below is in
 [`modules/api-private-edge`](../modules/api-private-edge): a private API reached through
-PrivateLink, split-horizon DNS, and an optional CloudFront front door, with the four
-CloudFront traps described in Q3 enforced at plan time.
+PrivateLink, a private custom domain name, split-horizon DNS, and an optional CloudFront
+front door. Of the four CloudFront traps in Q3, ordering is enforced by a plan-time
+precondition; caching and the Host header are pinned in the module rather than left as
+inputs; and the fourth, that a path prefix is not an authorisation boundary, is a
+property of the request that no Terraform can check, so it is documented on the input
+and belongs to the authorizer.
 
 ---
 
@@ -185,10 +189,12 @@ policy closes. Before this existed the only options were exposing `execute-api`
 names to consumers or running a reverse proxy, and both are why teams reached for a
 regional endpoint in the first place.
 
-The security property this buys is the important part: once the API is `PRIVATE`,
-the public `execute-api` endpoint does not exist. The bypass in Q1.1 is not blocked by
-a rule that someone could misconfigure. It is structurally impossible. That is a
-categorically stronger guarantee than any mitigation in Q4.
+The security property this buys is the important part, stated precisely. Once the API
+is `PRIVATE` the `execute-api` name still resolves publicly and answers 403; what no
+longer exists is any path to invoke the API through it. The bypass in Q1.1 is then not
+blocked by a rule that someone could misconfigure, it has nowhere to arrive. That is a
+categorically stronger guarantee than any mitigation in Q4, and it is worth having the
+distinction ready, because "the endpoint is gone" is the version that gets challenged.
 
 ### The cheaper stepping stone, and its cost
 
@@ -318,8 +324,13 @@ The standard AWS pattern, and the strongest available while the endpoint stays p
 
 It holds exactly as long as the secret does, so:
 
-- Store it in **Secrets Manager**, never in the Terraform state or the distribution
-  config as a literal.
+- Store it in **Secrets Manager** and read it from there, while being honest about
+  what that does and does not buy. CloudFront accepts an origin custom header only as
+  a literal string, so the value is in the distribution config unavoidably, and any
+  Terraform that reads the secret writes the plaintext into state. What the
+  indirection actually buys is that the value never enters version control and that
+  rotating it is a secret update rather than a code change. The state file is part of
+  the trust boundary for this control; encrypt it and restrict who can read it.
 - **Rotate it with the documented overlap procedure**: add the new value to the WAF
   allow-list, update the CloudFront origin header, wait for the distribution to fully
   deploy, then remove the old value. Rotating without the overlap causes a full
@@ -327,15 +338,24 @@ It holds exactly as long as the secret does, so:
 - Alarm on blocked requests at the regional WAF: a sustained non-zero rate is either
   an attacker probing or a rotation that half-completed.
 
-### Tier 3 - `aws:SourceIp` resource policy using the CloudFront prefix list
+### Tier 3 - restrict source IPs to CloudFront's origin-facing ranges
 
-An API Gateway resource policy restricting source IPs to
-`com.amazonaws.global.cloudfront.origin-facing`.
+The intent is to accept only traffic arriving from CloudFront. Two things about how
+this is written are worth getting right, because the obvious form does not work.
 
-It is weaker than it looks, and the reason should be stated: it proves the request
+**A managed prefix list cannot be named in a resource policy.** Prefix lists are
+referenceable from security groups and route tables. IAM condition keys are not among
+their consumers, and `aws:SourceIp` takes CIDR values only, so a policy naming
+`com.amazonaws.global.cloudfront.origin-facing` is not a stricter policy, it is a
+broken one. The workable forms are to expand the prefix list into CIDRs at plan time
+via the `aws_ec2_managed_prefix_list` data source and template them into the policy,
+or to keep the check in WAF with an IPSet. Either way it needs re-planning when AWS
+changes the ranges, which is the maintenance cost of this tier.
+
+**And it is weaker than it looks even when written correctly**: it proves the request
 came from **a** CloudFront distribution, not from **ours**. An attacker can put their
-own CloudFront distribution in front of your regional endpoint and satisfy it. It is
-worth having as a layer, but only stacked on top of Tier 2 - never on its own.
+own distribution in front of your regional endpoint and satisfy it. Worth having as a
+layer stacked on Tier 2, never on its own.
 
 ### Tier 4 - Detection
 
@@ -354,7 +374,7 @@ Assume a bypass will eventually work and make it visible:
 | 1 | Private API + PrivateLink | **Structural** - no endpoint to bypass | Medium |
 | 1b | `disable_execute_api_endpoint` on a regional API with a custom domain | Structural for the default hostname; the custom domain stays public | **Very low** |
 | 2 | Secret header + WAF default-deny | Strong while the secret holds | Low |
-| 3 | CloudFront prefix-list resource policy | Weak alone - proves "a" distribution, not ours | Low |
+| 3 | CloudFront origin-facing CIDRs, expanded from the prefix list | Weak alone - proves "a" distribution, not ours | Low |
 | 4 | Bypass detection and alarming | Detective, not preventive | Low |
 
 The honest recommendation: ship Tiers 2-4 within weeks because they are cheap, and

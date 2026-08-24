@@ -143,8 +143,8 @@ locals {
             # IfExists, because a plain StringEquals on a context key the caller
             # does not populate evaluates to FALSE and denies the request. AWS
             # Backup may authorise its copy-time KMS calls through a grant rather
-            # than through this statement, in which case kms:ViaService is absent
-            #, and a fail-closed condition would deny the very operation this
+            # than through this statement, in which case kms:ViaService is absent.
+            # A fail-closed condition would then deny the very operation this
             # statement exists to permit, nightly, after a clean apply.
             #
             # A wildcard Region, because a cross-account destination may also be
@@ -269,7 +269,7 @@ resource "aws_backup_vault_lock_configuration" "this" {
 
         A compliance lock is permanent once its ${var.lock.changeable_for_days}-day grace period elapses:
         retention cannot be shortened, recovery points cannot be deleted early, the vault cannot
-        be destroyed while it holds them, and no principal. Including the account root, can
+        be destroyed while it holds them, and no principal, including the account root, can
         undo it.
 
         Validate in governance mode first (lock.mode = "governance"), prove a backup, a copy and a

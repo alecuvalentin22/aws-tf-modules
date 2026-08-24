@@ -295,6 +295,9 @@ resource "aws_cloudwatch_metric_alarm" "stale" {
   dimensions = {
     BackupVaultName = module.primary_vault.name
   }
+  # Period x EvaluationPeriods is the alarm's total evaluation window and CloudWatch
+  # caps that product at 86400 seconds, which is why the variable stops at 24 hours.
+  # A longer lookback is not expressible as a metric alarm in any arrangement.
   period              = var.staleness_alarm_period_hours * 3600
   evaluation_periods  = 1
   threshold           = 1

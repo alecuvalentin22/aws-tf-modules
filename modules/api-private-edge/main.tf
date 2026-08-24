@@ -7,8 +7,9 @@
 # so every edge protection can be skipped with one curl against the regional
 # URL. The real security posture becomes whatever the regional WAF enforces.
 #
-# Making the API PRIVATE removes the public endpoint entirely. The bypass is not
-# blocked by a rule someone could misconfigure; there is nothing left to reach.
+# Making the API PRIVATE removes public invocability. The execute-api name still
+# resolves and answers 403; what is gone is any way to reach the API through it.
+# The bypass is not blocked by a rule someone could misconfigure, it has no path.
 ###############################################################################
 
 data "aws_caller_identity" "current" {}
@@ -50,8 +51,18 @@ locals {
   create_private_zone = var.private_hosted_zone_id == null
   private_zone_id     = local.create_private_zone ? aws_route53_zone.private[0].zone_id : var.private_hosted_zone_id
 
-  # The apex of the hostname, used when the module creates the private zone.
-  zone_name = join(".", slice(split(".", var.hostname), 1, length(split(".", var.hostname))))
+  # The zone is the hostname itself, not its parent.
+  #
+  # Creating example.com privately in order to answer for api.example.com makes
+  # Route 53 Resolver serve EVERY *.example.com query in that VPC out of this zone,
+  # returning NXDOMAIN for every name it does not contain: other teams' APIs, mail,
+  # SaaS CNAMEs. It also means the second API to use this module in the same VPC
+  # fails with ConflictingDomainExists, because one VPC cannot associate two private
+  # zones of the same name.
+  #
+  # A zone named for the full hostname holds one record at its own apex and
+  # overrides nothing else.
+  zone_name = var.hostname
 
   # ---------------------------------------------------------------------------
   # Behavior ordering.
@@ -121,12 +132,24 @@ locals {
 resource "aws_vpc_endpoint" "execute_api" {
   count = local.create_endpoint ? 1 : 0
 
-  vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${local.region}.execute-api"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = var.vpc_endpoint_subnet_ids
-  security_group_ids  = var.vpc_endpoint_security_group_ids
-  private_dns_enabled = true
+  vpc_id             = var.vpc_id
+  service_name       = "com.amazonaws.${local.region}.execute-api"
+  vpc_endpoint_type  = "Interface"
+  subnet_ids         = var.vpc_endpoint_subnet_ids
+  security_group_ids = var.vpc_endpoint_security_group_ids
+
+  # Off by default, and this is the consequential setting on the whole endpoint.
+  #
+  # Private DNS on an execute-api endpoint takes over *.execute-api.<region>.
+  # amazonaws.com for the ENTIRE VPC. Every caller in that VPC then resolves every
+  # API Gateway hostname to this endpoint, including APIs that are still regional,
+  # in other accounts, or owned by other teams, and those calls start returning 403.
+  # That breaks exactly the phased migration this design depends on, where regional
+  # APIs keep working while private ones are cut over one at a time.
+  #
+  # The private custom domain name is what makes it unnecessary: consumers call the
+  # friendly hostname, which resolves through the module's own zone.
+  private_dns_enabled = var.enable_endpoint_private_dns
 
   tags = merge(local.tags, { Name = "${var.name}-execute-api" })
 
@@ -275,12 +298,12 @@ resource "aws_route53_zone" "private" {
     # otherwise be removed on the next apply.
     ignore_changes = [vpc]
 
-    # zone_name drops the first label, so a two-label hostname would create a zone
-    # for the public suffix itself and answer for every name under it inside the
-    # VPC. Terraform accepts that; the blast radius is the whole VPC's resolution.
+    # A zone named for a bare public suffix, or for a registrable apex, answers for
+    # everything beneath it inside the VPC. The zone this module creates is the
+    # hostname itself, so this only catches a hostname that is already too broad.
     precondition {
       condition     = length(split(".", var.hostname)) >= 3
-      error_message = "hostname \"${var.hostname}\" has no subdomain, so the zone this module would create is \"${local.zone_name}\". Supply private_hosted_zone_id instead, or use a hostname with a subdomain."
+      error_message = "hostname \"${var.hostname}\" is an apex, so a private zone for it would answer for every name beneath it inside the VPC. Use a hostname with a subdomain, or supply private_hosted_zone_id."
     }
   }
 }
@@ -313,10 +336,15 @@ data "aws_vpc_endpoint" "execute_api" {
 resource "aws_api_gateway_domain_name" "private" {
   count = var.create_private_domain_name ? 1 : 0
 
-  domain_name              = var.hostname
-  regional_certificate_arn = var.private_certificate_arn
-  security_policy          = "TLS_1_2"
-  tags                     = local.tags
+  domain_name = var.hostname
+
+  # certificate_arn, not regional_certificate_arn. CreateDomainName uses
+  # certificateArn for edge-optimized AND private endpoints; regionalCertificateArn
+  # belongs to REGIONAL. The provider accepts either field for any endpoint type, so
+  # the wrong one is only rejected by the API at apply.
+  certificate_arn = var.private_certificate_arn
+  security_policy = "TLS_1_2"
+  tags            = local.tags
 
   endpoint_configuration {
     types = ["PRIVATE"]
@@ -329,13 +357,27 @@ resource "aws_api_gateway_domain_name" "private" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "AllowThePermittedEndpointOnly"
+        Sid       = "AllowThePermittedEndpoint"
         Effect    = "Allow"
         Principal = "*"
         Action    = "execute-api:Invoke"
         Resource  = "*"
         Condition = {
           StringEquals = { "aws:SourceVpce" = local.endpoint_id }
+        }
+      },
+      {
+        # The same reasoning as the API's policy, applied one layer up. An Allow
+        # on its own is not a control: a caller arriving through some other
+        # associated endpoint, holding an identity policy that grants
+        # execute-api:Invoke, is not denied by an allow it simply does not match.
+        Sid       = "DenyEveryOtherEndpoint"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "execute-api:Invoke"
+        Resource  = "*"
+        Condition = {
+          StringNotEquals = { "aws:SourceVpce" = local.endpoint_id }
         }
       },
     ]
@@ -377,6 +419,23 @@ resource "aws_api_gateway_base_path_mapping" "private" {
   domain_name_id = aws_api_gateway_domain_name.private[0].domain_name_id
 }
 
+locals {
+  endpoint_dns_entries = tolist(data.aws_vpc_endpoint.execute_api.dns_entry)
+
+  # An interface endpoint publishes a Region-wide DNS name plus one per AZ, and AWS
+  # documents no ordering for them. Taking entry [0] therefore picks a zonal name on
+  # some applies and the regional one on others, which turns the record into a
+  # single-AZ dependency that nothing in the plan reveals.
+  #
+  # The zonal names are the regional name with an AZ inserted, so the regional entry
+  # is the shortest. That is a property of the names themselves rather than of the
+  # order they arrive in.
+  endpoint_regional_dns = [
+    for e in local.endpoint_dns_entries : e
+    if length(e.dns_name) == min([for x in local.endpoint_dns_entries : length(x.dns_name)]...)
+  ][0]
+}
+
 resource "aws_route53_record" "private" {
   count = var.create_dns_records ? 1 : 0
 
@@ -385,8 +444,8 @@ resource "aws_route53_record" "private" {
   type    = "A"
 
   alias {
-    name                   = tolist(data.aws_vpc_endpoint.execute_api.dns_entry)[0].dns_name
-    zone_id                = tolist(data.aws_vpc_endpoint.execute_api.dns_entry)[0].hosted_zone_id
+    name                   = local.endpoint_regional_dns.dns_name
+    zone_id                = local.endpoint_regional_dns.hosted_zone_id
     evaluate_target_health = false
   }
 

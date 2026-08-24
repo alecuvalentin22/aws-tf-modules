@@ -14,9 +14,10 @@ summary.
 | 4 | Backup policy | [`docs/scenario-4-backup-policy.md`](docs/scenario-4-backup-policy.md) | [`modules/backup-policy`](modules/backup-policy) |
 
 Scenario 4 is the one the brief asks for a module, and it is where most of the effort
-went. Scenarios 1-3 also have code. Each of those answers makes a claim I would rather show
-than assert: the managed Config rule cannot answer the question, a private API kills the
-bypass outright, and the alarms that matter are the ones treating silence as failure.
+went. Scenarios 1-3 also have code, because in each of them the central claim is easier
+to check than to argue: that the managed Config rule cannot answer the question, that a
+private API removes the bypass rather than blocking it, and that the alarms worth having
+are the ones treating silence as failure.
 
 ---
 
@@ -94,9 +95,9 @@ done
 | --- | --- |
 | `backup-policy` | 63 |
 | `backup-policy/modules/backup-vault` | 20 |
-| `api-private-edge` | 23 |
-| `gitlab-observability` | 17 |
-| | **123** |
+| `api-private-edge` | 27 |
+| `gitlab-observability` | 20 |
+| | **131** |
 
 No AWS account or credentials are needed. Every test runs against `mock_provider`,
 which is what makes them usable as a required check rather than a nightly job someone
@@ -122,9 +123,9 @@ python3 scripts/lint_policies.py
 | Check | Status |
 | --- | --- |
 | `terraform fmt` / `validate` | clean |
-| `terraform test` - 123 tests, mocked provider | passing |
+| `terraform test` - 131 tests, mocked provider | passing |
 | Lambda unit tests - 36 tests | passing |
-| `scripts/lint_policies.py` - every rendered policy through an IAM linter | 8/8 clean |
+| `scripts/lint_policies.py` - every policy the backup module renders, through an IAM linter | 8/8 clean |
 
 The policy linter renders the policies from a real `terraform plan` and checks them against
 AWS's action and condition-key catalogue: typo'd action names, condition operators that do
@@ -163,7 +164,8 @@ lambdas/kms-rotation-compliance/    Scenario 1, Q3: the custom AWS Config rule, 
 runbooks/backup-restore.md          Which of the three copies to restore from, and why
                                     that choice is not interchangeable
 
-scripts/lint_policies.py            Renders and lints every policy the module produces
+scripts/lint_policies.py            Renders and lints every policy the backup module
+                                    produces
 ```
 
 ---

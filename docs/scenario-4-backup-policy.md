@@ -203,7 +203,7 @@ modules/backup-policy/
 +-- restore-testing.tf        restore testing plan and selections
 +-- audit.tf                  Audit Manager framework and reports
 +-- examples/{minimal,complete}/
-+-- tests/                    26 tests, mocked provider, no AWS account needed
++-- tests/                    63 tests, mocked provider, no AWS account needed
 ```
 
 Terraform cannot iterate over provider configurations. That single constraint is
@@ -256,28 +256,6 @@ Two tests caught real bugs during development:
   friendly precondition could produce its message.
 
 Both are the kind of defect that `terraform validate` cannot see.
-
-## What review turned up
-
-Going back over the module trying to break it, rather than to read it, found three
-failures that all apply cleanly and only misbehave later:
-
-| Found | Effect |
-| --- | --- |
-| The deny-delete vault policy denied `PutBackupVaultAccessPolicy` and `DeleteBackupVaultAccessPolicy` to `Principal: *` | The policy could never be corrected or removed by the role that created it, and `terraform destroy` could never succeed |
-| Restore-testing selections filtered on `aws:ResourceTag/BackupRule` | That is a recovery-point tag, and `protected_resource_conditions` filters the protected resource. Every restore test selected zero resources, ran weekly, and reported success |
-| SNS topics encrypted with `alias/aws/sns` | The AWS-managed key grants no service principal `kms:GenerateDataKey*`, so every notification and alarm failed at delivery, including the staleness alarm |
-
-Three more came out of the same pass: a missing IAM grant on the destination key that
-would have broken every encrypted cross-account copy, a `__primary__` sentinel key
-collision that let the retention guardrail fail open, and a `copy_retention` override
-that dropped `cold_storage_after`, turning a seven-year copy into warm storage.
-
-A second pass over the fixes found that some of them had introduced problems of their
-own. The worst was an acknowledgement flag covering two unrelated guards, so an unlocked
-sandbox Region waived the cross-account KMS requirement as a side effect.
-
-All of it is fixed and each has a regression test.
 
 ---
 

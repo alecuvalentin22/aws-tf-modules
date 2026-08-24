@@ -99,6 +99,25 @@ variable "vpc_endpoint_security_group_ids" {
   default     = []
 }
 
+variable "enable_endpoint_private_dns" {
+  description = <<-EOT
+    Enable private DNS on a module-created interface endpoint. Off by default, and this
+    is the most consequential setting on the endpoint.
+
+    Private DNS on an execute-api endpoint takes over *.execute-api.<region>.amazonaws.com
+    for the ENTIRE VPC. Every caller in that VPC then resolves every API Gateway hostname
+    to this endpoint, including APIs that are still regional, owned by other teams, or in
+    other accounts, and those calls begin returning 403. That breaks the phased migration
+    this design depends on, where regional APIs keep working while private ones are cut
+    over one at a time.
+
+    The private custom domain name is what makes it unnecessary: consumers call the
+    friendly hostname and resolve it through this module's own zone.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "allowed_principal_arns" {
   description = <<-EOT
     Principals allowed by the API's resource policy, on top of the endpoint condition.
@@ -229,6 +248,19 @@ variable "path_routes" {
   validation {
     condition     = length(distinct([for r in var.path_routes : r.path_pattern])) == length(var.path_routes)
     error_message = "Duplicate path_pattern entries: the later one would be unreachable."
+  }
+
+  # CloudFront accepts exactly three method sets, and rejects anything else at apply.
+  # The set must also contain the cached_methods the behavior declares.
+  validation {
+    condition = alltrue([
+      for r in var.path_routes : contains([
+        "GET,HEAD",
+        "GET,HEAD,OPTIONS",
+        "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT",
+      ], join(",", sort(r.allowed_methods)))
+    ])
+    error_message = "allowed_methods must be exactly [GET,HEAD], [GET,HEAD,OPTIONS], or [GET,HEAD,OPTIONS,PUT,POST,PATCH,DELETE]. CloudFront accepts no other combination and rejects the distribution at apply."
   }
 }
 

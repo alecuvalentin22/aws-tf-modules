@@ -13,8 +13,10 @@ Shield and a global WAF in front of it. Every edge protection can be skipped wit
 one `curl` against the regional URL, so the real security posture of the platform
 is whatever the *regional* WAF enforces.
 
-Making the API `PRIVATE` removes the public endpoint. The bypass is not blocked by
-a rule someone could misconfigure; there is nothing left to reach.
+Making the API `PRIVATE` removes public *invocability*. To be precise about the
+claim: the `{api-id}.execute-api.{region}.amazonaws.com` name still resolves, and
+answers 403. What is gone is any way to reach the API through it. The bypass is not
+blocked by a rule someone could misconfigure, it has no path left.
 
 ## Usage
 
@@ -84,7 +86,10 @@ the endpoint and the API all look healthy.
 The missing piece is a **private custom domain name**: API Gateway matches the SNI
 name against the registered domain, the access association says which endpoint may
 present that name, and the base path mapping says which API and stage it resolves
-to. The module creates all three and refuses to publish the record without them.
+to. The module creates the domain name and the access association, and refuses to
+publish the record without them. The base path mapping needs a stage, which belongs
+to whoever defines the API's methods, so it is created only once `api_stage_name` is
+given.
 
 The domain name carries its own resource policy, evaluated *before* the API's, so
 it gets the `aws:SourceVpce` condition too. Otherwise the domain is reachable from
@@ -104,7 +109,9 @@ them fails at apply time on its own.
 | `exposure = "dual"` without a certificate or origin | Would fail at apply with a less useful message |
 | An `internal-*` ALB origin with no VPC origin | It does not resolve on the public internet. CloudFront accepts the distribution and then fails to connect on every request, which reads as an origin outage |
 | A private DNS record with no private custom domain name | The name resolves and every call returns 403 |
-| Creating a private zone for a two-label hostname | The zone would be the public suffix itself and would answer for every name under it inside the VPC |
+| Creating a private zone for an apex hostname | A private zone answers for every name beneath it inside the VPC. The zone this module creates is the hostname itself, never its parent: a private `example.com` would override resolution for every `*.example.com` in the VPC and collide with the next API to use the module |
+| Private DNS on the interface endpoint, by default | It takes over `*.execute-api.<region>.amazonaws.com` for the whole VPC, so every still-regional API any team calls starts returning 403. The private custom domain name is what makes it unnecessary |
+| `allowed_methods` outside the three sets CloudFront accepts | Rejected at apply |
 | An interface endpoint in fewer than two subnets | It becomes a single-AZ dependency for every internal caller |
 | An interface endpoint with no security group | It falls back to the VPC default, which is rarely what was meant |
 
@@ -113,18 +120,29 @@ is the weakness the module exists to remove.
 
 ## The four CloudFront traps, handled
 
-1. **Host header.** API Gateway routes on `Host`; forwarding the viewer's value to
-   an `execute-api` origin returns 403 on every request. The module pins the
-   `AllViewerExceptHostHeader` managed policy. This is the most common cause of
-   "CloudFront in front of API Gateway returns 403".
-2. **Behavior ordering is security configuration.** Enforced at plan time.
-3. **Caching disabled explicitly.** API responses here are per-caller; caching them
-   means one customer receiving another's response, which surfaces as a data breach
-   rather than a bug.
+1. **Host header, and the received wisdom is backwards here.** The familiar rule is
+   "never forward the viewer's `Host` to API Gateway", and it is correct when the
+   origin *is* an `execute-api` hostname: API Gateway matches `Host` against its own
+   name, the viewer's value matches nothing, and every request 403s. That is the most
+   common cause of "CloudFront in front of API Gateway returns 403".
+
+   This module's origin is never `execute-api`. It is an ALB in front of a `PRIVATE`
+   API reached through a private custom domain name, and API Gateway matches *that*
+   domain against the name it receives. Stripping `Host` here means the API is asked
+   for `internal-alb-....elb.amazonaws.com`, which matches no registered domain and
+   carries no `x-apigw-api-id`, so every external request 403s: the identical symptom
+   from the opposite setting. The module pins `AllViewer`, and the test asserts the
+   literal managed-policy ID rather than the module's own local, so it can fail.
+2. **Behavior ordering is security configuration.** Enforced at plan time by a
+   precondition, and this is the only one of the four genuinely *enforced*.
+3. **Caching disabled explicitly.** Pinned rather than enforced: API responses here
+   are per-caller, and caching them means one customer receiving another's response,
+   which surfaces as a data breach rather than a bug.
 4. **A path prefix is not an authorisation boundary.** CloudFront normalises the URI
    when matching but forwards the raw one, so `/a/..%2fb` can match one behavior and
-   arrive as another. Documented on `path_routes`; nothing in Terraform can enforce
-   it. Authorisation belongs in the authorizer and the resource policy.
+   arrive as another. This is a property of the request, not of the configuration, so
+   no Terraform can check it. Documented on `path_routes`; authorisation belongs in
+   the authorizer and the resource policy.
 
 ## Resource policy
 
@@ -137,5 +155,5 @@ it can be asserted on and read in review.
 ## Tests
 
 ```bash
-terraform init && terraform test    # 23 tests, mocked provider, no AWS account
+terraform init && terraform test    # 27 tests, mocked provider, no AWS account
 ```

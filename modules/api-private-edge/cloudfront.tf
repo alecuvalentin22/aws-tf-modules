@@ -7,8 +7,30 @@ locals {
   # CachingDisabled: API responses are per-caller and must never be shared.
   cache_policy_caching_disabled = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
 
-  # AllViewerExceptHostHeader: forwards everything the viewer sent EXCEPT Host.
+  # AllViewer: forwards everything the viewer sent, Host included.
+  origin_request_policy_all_viewer = "216adef6-5c7f-47e4-b989-5492eafa07d3"
+
+  # AllViewerExceptHostHeader: everything EXCEPT Host.
   origin_request_policy_all_viewer_except_host = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+
+  # Which of the two is correct depends entirely on what the origin routes on, and
+  # the usual advice points the wrong way for this topology.
+  #
+  # "Never forward Host to API Gateway" is about an execute-api origin: API Gateway
+  # matches the Host against its own hostname, the viewer's value matches nothing,
+  # and every request 403s. It is the most common cause of "CloudFront in front of
+  # API Gateway returns 403".
+  #
+  # This module's origin is never execute-api. It is an ALB in front of a PRIVATE
+  # API reached through a private custom domain name, and API Gateway matches that
+  # domain against the SNI/Host name it receives. Stripping Host here means the API
+  # is asked for internal-alb-....elb.amazonaws.com, which matches no registered
+  # domain name and carries no x-apigw-api-id, so every external request 403s: the
+  # identical symptom, caused by the opposite setting.
+  #
+  # The viewer's Host is already the hostname the domain name is registered under,
+  # because it is the distribution's alias. So it is forwarded.
+  origin_request_policy = local.origin_request_policy_all_viewer
 }
 
 # Guarded on the ARN being present as well as on the exposure mode. Reading the
@@ -98,7 +120,7 @@ resource "aws_cloudfront_distribution" "this" {
     cached_methods         = ["GET", "HEAD"]
 
     cache_policy_id          = local.cache_policy_caching_disabled
-    origin_request_policy_id = local.origin_request_policy_all_viewer_except_host
+    origin_request_policy_id = local.origin_request_policy
   }
 
   # Order is preserved from var.path_routes, and main.tf refuses an ordering
@@ -114,7 +136,7 @@ resource "aws_cloudfront_distribution" "this" {
       cached_methods         = ["GET", "HEAD"]
 
       cache_policy_id          = local.cache_policy_caching_disabled
-      origin_request_policy_id = local.origin_request_policy_all_viewer_except_host
+      origin_request_policy_id = local.origin_request_policy
     }
   }
 

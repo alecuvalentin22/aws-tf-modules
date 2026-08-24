@@ -196,7 +196,7 @@ Two phases: a one-off design decision, then a repeatable per-key ceremony.
 The property that makes this safe is **step 4**. `ImportKeyMaterial` with
 `NEW_KEY_MATERIAL` stages the material without making it current. Nothing observable
 changes until step 6. So the expensive, hard-to-repeat part of the ceremony, the HSM
-work. Is completed and verified before the only irreversible step is taken, and can
+work, is completed and verified before the only irreversible step is taken, and it can
 be abandoned at no cost if verification fails.
 
 ### Phase 2 - rollout order
@@ -349,20 +349,42 @@ The wrapping algorithm is chosen when the import parameters are requested, not w
 material is imported, so the condition belongs on `GetParametersForImport`:
 
 ```json
-{
-  "Sid": "DenyWeakImportWrapping",
-  "Effect": "Deny",
-  "Principal": "*",
-  "Action": "kms:GetParametersForImport",
-  "Resource": "*",
-  "Condition": {
-    "StringNotEquals": {
-      "kms:WrappingAlgorithm": "RSAES_OAEP_SHA_256",
-      "kms:WrappingKeySpec": "RSA_4096"
+[
+  {
+    "Sid": "DenyWeakWrappingAlgorithm",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": "kms:GetParametersForImport",
+    "Resource": "*",
+    "Condition": {
+      "StringNotEquals": { "kms:WrappingAlgorithm": "RSAES_OAEP_SHA_256" }
+    }
+  },
+  {
+    "Sid": "DenyWeakWrappingKeySpec",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": "kms:GetParametersForImport",
+    "Resource": "*",
+    "Condition": {
+      "StringNotEquals": { "kms:WrappingKeySpec": "RSA_4096" }
     }
   }
-}
+]
 ```
+
+Two statements rather than one, and the reason is the same AND/OR distinction that
+decides the resource selection in scenario 4. Condition keys within a single operator
+block are **AND**-ed. Writing both keys under one `StringNotEquals` therefore denies
+only a request that gets *both* wrong: `RSAES_PKCS1_V1_5` with `RSA_4096` satisfies
+the first half of the negation and fails the second, the condition evaluates false,
+and the Deny does not fire. The policy reads as though it pins both and in practice
+pins neither. Splitting them makes each denial independent, which is what "neither of
+these may be weak" actually means.
+
+That is also the direction of failure to watch for: the statement looks stricter than
+it is, produces no error, and is only discovered when someone wraps with PKCS#1 v1.5
+and the import succeeds.
 
 Attaching this to `kms:ImportKeyMaterial` instead is a trap worth naming, because it looks
 correct and is not. `kms:WrappingAlgorithm` is not present in an `ImportKeyMaterial`

@@ -67,8 +67,9 @@ run "every_critical_alarm_treats_missing_data_as_breaching" {
 }
 
 # --------------------------------------------------------------------------
-# An alarm that cannot match a metric is the same defect as an alarm on a
-# metric nobody publishes. Both sit in INSUFFICIENT_DATA and read as healthy.
+# An alarm that cannot match a metric is the same defect as an alarm on a metric
+# nobody publishes. Because every alarm here treats missing data as breaching,
+# both page continuously rather than sitting quietly in INSUFFICIENT_DATA.
 # --------------------------------------------------------------------------
 
 run "every_alarm_carries_a_dimension_set" {
@@ -87,12 +88,22 @@ run "every_alarm_carries_a_dimension_set" {
       for a in aws_cloudwatch_metric_alarm.sidekiq_queue_latency :
       a.dimensions["InstanceId"] == var.instance_id
     ])
-    error_message = "A dimensionless Sidekiq alarm never matches the published metric and stays in INSUFFICIENT_DATA."
+    error_message = "A dimensionless Sidekiq alarm matches no published metric, and with missing data treated as breaching it pages continuously while the platform is healthy."
   }
 
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.instance_status.dimensions) > 0
-    error_message = "Every alarm here must name what it is watching."
+    condition     = aws_cloudwatch_metric_alarm.instance_status.dimensions["InstanceId"] == var.instance_id
+    error_message = "The host alarm must be dimensioned to the instance it claims to watch."
+  }
+
+  # The agent publishes disk metrics under path as well as InstanceId, and an alarm
+  # matches on the exact set or on nothing at all.
+  assert {
+    condition = alltrue([
+      for a in aws_cloudwatch_metric_alarm.repository_disk :
+      a.dimensions["path"] == var.repository_volume_path && a.dimensions["InstanceId"] == var.instance_id
+    ])
+    error_message = "The disk alarms must carry the dimension set the CloudWatch agent is configured to publish."
   }
 }
 
@@ -175,9 +186,9 @@ run "rejects_the_health_endpoint_for_load_balancing" {
     health_check_path = "/-/health"
   }
 
-  # GitLab documents this explicitly: /-/health fails whenever a backend
-  # dependency is slow, so a transient database slowdown evicts every healthy
-  # node and turns a degradation into an outage.
+  # /-/health is the SHALLOW endpoint: it reports that the application server is
+  # running and nothing more, so a node whose database has gone away still passes
+  # and keeps receiving traffic.
   expect_failures = [var.health_check_path]
 }
 
@@ -191,12 +202,27 @@ run "rejects_the_legacy_health_check_path" {
   expect_failures = [var.health_check_path]
 }
 
-run "readiness_is_the_default" {
+run "rejects_the_deep_readiness_check_for_load_balancing" {
+  command = plan
+
+  variables {
+    health_check_path = "/-/readiness?all=1"
+  }
+
+  # The opposite mistake, and the one people make after learning the first: ?all=1
+  # checks shared backend dependencies, so a single slow database makes every node
+  # report unready at once and the pool drains completely.
+  expect_failures = [var.health_check_path]
+}
+
+run "readiness_is_the_default_and_reaches_the_caller" {
   command = apply
 
+  # The module builds no target group, so the useful assertion is that the
+  # validated value is what the caller receives, not that a default equals itself.
   assert {
-    condition     = var.health_check_path == "/-/readiness"
-    error_message = "The default health check path should be the one GitLab recommends for load balancing."
+    condition     = output.health_check_path == "/-/readiness"
+    error_message = "The health check path should be exported for the caller's target group."
   }
 }
 
@@ -385,4 +411,50 @@ run "canaries_require_their_execution_role" {
   }
 
   expect_failures = [aws_synthetics_canary.this["clone_https"]]
+}
+
+run "rejects_subscriptions_that_would_be_silently_dropped" {
+  command = plan
+
+  variables {
+    alarm_topic_arn     = "arn:aws:sns:eu-central-1:111111111111:existing"
+    alarm_subscriptions = { email = "platform-oncall@example.com" }
+  }
+
+  # Attaching these to a topic the module does not own is not possible, and
+  # dropping them quietly would leave a caller believing the alarms reach someone.
+  expect_failures = [var.alarm_subscriptions]
+}
+
+run "the_canary_alarm_period_follows_the_canary_schedule" {
+  command = apply
+
+  variables {
+    canaries = {
+      clone_https = {
+        artifact_s3_bucket  = "canary-artifacts"
+        artifact_s3_key     = "clone-https.zip"
+        schedule_expression = "rate(15 minutes)"
+      }
+      web_login = {
+        artifact_s3_bucket = "canary-artifacts"
+        artifact_s3_key    = "web-login.zip"
+      }
+    }
+    canary_execution_role_arn = "arn:aws:iam::111111111111:role/canary"
+    canary_results_bucket     = "canary-results"
+  }
+
+  # A fixed five-minute period leaves two of every three periods empty for a
+  # 15-minute canary, and with missing data treated as breaching that alarm is in
+  # ALARM permanently while the canary is passing.
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.canary_failed["clone_https"].period == 900
+    error_message = "The alarm period must be at least the canary's own interval."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.canary_failed["web_login"].period == 300
+    error_message = "A canary on the default rate(5 minutes) should keep a 300-second period."
+  }
 }

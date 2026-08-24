@@ -95,8 +95,8 @@ variable "rules" {
 
       # Merging field by field means null has to mean "inherit", which leaves no
       # way to say "no cold tier on this hop". This is that sentinel. Without it a
-      # short WARM operational copy of a rule that tiers to cold is inexpressible
-      #, and worse, it inherits a cold transition that makes restores take hours.
+      # short WARM operational copy of a rule that tiers to cold is inexpressible,
+      # and worse, it inherits a cold transition that makes restores take hours.
       disable_cold_storage                      = optional(bool, false)
       opt_in_to_archive_for_supported_resources = optional(bool)
     })), {})
@@ -551,13 +551,29 @@ variable "enable_staleness_alarm" {
 }
 
 variable "staleness_alarm_period_hours" {
-  description = "Hours without a successful backup job before the staleness alarm fires. Should exceed the longest gap between scheduled runs."
+  description = <<-EOT
+    Hours without a successful backup job before the staleness alarm fires. Should exceed the
+    longest gap between scheduled runs.
+
+    24 is the ceiling, and the reason is a constraint worth knowing. A CloudWatch alarm's
+    total evaluation window is Period x EvaluationPeriods, and that product may not exceed
+    86400 seconds. So no metric alarm can express "nothing succeeded in the last 26 hours",
+    however it is arranged: not a longer period, not more evaluation periods, not metric
+    maths. One day is the hard limit on how far back a metric alarm can look.
+
+    26 is the number this wants to be, because a daily plan with a start window and some
+    jitter can legitimately land more than 24 hours after the previous run. If that margin
+    is genuinely needed, the alarm has to stop being a metric alarm: schedule something that
+    calls ListBackupJobs, publishes hours-since-last-successful-job as a custom metric, and
+    alarm on that with a short period. Everything above 24 hours is then in the expression
+    rather than in the evaluation window.
+  EOT
   type        = number
-  default     = 26
+  default     = 24
 
   validation {
-    condition     = var.staleness_alarm_period_hours >= 1 && var.staleness_alarm_period_hours <= 168
-    error_message = "staleness_alarm_period_hours must be between 1 and 168 (CloudWatch alarm period limit)."
+    condition     = var.staleness_alarm_period_hours >= 1 && var.staleness_alarm_period_hours <= 24
+    error_message = "staleness_alarm_period_hours must be between 1 and 24. A CloudWatch alarm's evaluation window is Period x EvaluationPeriods and cannot exceed 86400 seconds, so a longer lookback is not expressible as a metric alarm at all; publish a custom hours-since-last-success metric instead."
   }
 }
 

@@ -36,22 +36,40 @@ variable "base_url" {
 
 variable "health_check_path" {
   description = <<-EOT
-    Path the load balancer health check calls.
+    Path the load balancer health check calls. Consumed by the caller's target group;
+    this module creates no load balancer, so the value is validated and re-exported
+    rather than attached to anything here.
 
-    GitLab's documentation warns explicitly against using /-/health for load balancing:
-    it fails whenever any backend dependency is slow, so a transient database slowdown
-    pulls every healthy node out of the pool and turns a degradation into an outage. The
-    load balancer becomes an amplifier of small problems.
+    The four endpoints differ, and picking the wrong one fails in opposite directions:
 
-    Use /-/readiness. /-/liveness checks process liveness only, which is weaker than it
-    sounds for a load balancer decision. The module refuses /-/health.
+      /-/liveness         Is the Rails process up. Says nothing about whether it can
+                          serve a request, so a node with a dead database stays in
+                          the pool.
+      /-/health           Shallow: the application server is running. Same problem as
+                          liveness for a load balancer decision, and it is the one
+                          most often chosen because of the name.
+      /-/readiness        Deep enough to be useful and scoped to this node. The
+                          default, and what GitLab recommends for load balancing.
+      /-/readiness?all=1  Checks every backend dependency. This is the dangerous one:
+                          a slow shared database makes every node report unready at
+                          once, the load balancer drains the entire pool, and a
+                          degradation becomes an outage. Useful for a monitoring
+                          check, never for a load balancer.
+
+    The module refuses /-/health and /health_check because both answer a question that
+    is too shallow to gate traffic on.
   EOT
   type        = string
   default     = "/-/readiness"
 
   validation {
     condition     = !can(regex("^/-/health|^/health_check", var.health_check_path))
-    error_message = "GitLab documents /-/health as unsuitable for load balancer health checks: it fails on slow dependencies and evicts healthy nodes. Use /-/readiness."
+    error_message = "/-/health reports only that the application server is running, so a node whose database is gone still passes and keeps receiving traffic. Use /-/readiness."
+  }
+
+  validation {
+    condition     = !strcontains(var.health_check_path, "all=1")
+    error_message = "/-/readiness?all=1 checks shared backend dependencies, so one slow database makes every node report unready at the same moment and the load balancer drains the entire pool. It is a monitoring check, not a target group check. Use /-/readiness."
   }
 }
 
@@ -66,9 +84,24 @@ variable "alarm_topic_arn" {
 }
 
 variable "alarm_subscriptions" {
-  description = "protocol => endpoint subscribed to a module-created topic, e.g. { email = \"platform-oncall@example.com\" }."
+  description = <<-EOT
+    protocol => endpoint subscribed to a module-created topic, e.g.
+    { email = "platform-oncall@example.com" }.
+
+    Only applies when this module creates the topic. Supplying both this and
+    alarm_topic_arn is refused rather than ignored: a caller who sets both would
+    otherwise believe the alarms reach someone when nothing is subscribed.
+  EOT
   type        = map(string)
   default     = {}
+
+  # The guard belongs here rather than on the subscription resource, because that
+  # resource has no instances in exactly the case being guarded against, so a
+  # precondition on it could never run.
+  validation {
+    condition     = length(var.alarm_subscriptions) == 0 || var.alarm_topic_arn == null
+    error_message = "alarm_subscriptions applies only to a module-created topic, but alarm_topic_arn was supplied. Subscribe to that topic where it is defined, or drop alarm_topic_arn."
+  }
 }
 
 ###############################################################################
@@ -122,13 +155,37 @@ variable "cloudwatch_agent_installed" {
     Confirms the CloudWatch agent is installed and publishing to the namespace below.
 
     EC2 publishes neither memory nor disk-usage metrics on its own. Without the agent
-    the disk and memory alarms below reference metrics that will never exist, so they
-    sit in INSUFFICIENT_DATA forever, which is indistinguishable from healthy on a
-    dashboard. The module refuses to create them rather than create alarms that cannot
-    fire.
+    the disk and memory alarms below reference metrics that will never exist, and since
+    every alarm here treats missing data as breaching, they would go to ALARM on the
+    first evaluation and page continuously while nothing is wrong. The module refuses
+    to create them rather than create alarms that cannot tell you anything.
+
+    The agent also has to be configured to publish the dimension set the alarms match
+    on: aggregation_dimensions = [["InstanceId","path"]] for disk and [["InstanceId"]]
+    for memory. A default agent config emits disk metrics dimensioned by path, device
+    and fstype, which no alarm here would match.
   EOT
   type        = bool
   default     = false
+}
+
+variable "disk_metric_dimensions" {
+  description = <<-EOT
+    Dimension set the disk alarms match on. Empty uses
+    { InstanceId = var.instance_id, path = var.repository_volume_path }.
+
+    Set this when the CloudWatch agent publishes a different set. A default agent
+    config dimensions disk metrics by path, device and fstype on top of the appended
+    InstanceId, and an alarm matches on the exact set or on nothing at all.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "memory_metric_dimensions" {
+  description = "Dimension set the memory alarm matches on. Empty uses { InstanceId = var.instance_id }."
+  type        = map(string)
+  default     = {}
 }
 
 variable "cloudwatch_agent_namespace" {
@@ -184,8 +241,8 @@ variable "gitlab_metric_dimensions" {
 
     A CloudWatch alarm matches a metric on its exact dimension set, so this has to
     agree with whatever ships the metrics. Get it wrong and the alarm is not
-    approximately right, it is permanently in INSUFFICIENT_DATA, which reads as
-    healthy on a dashboard.
+    approximately right: it matches nothing, and because missing data is treated as
+    breaching it pages continuously while the platform is healthy.
   EOT
   type        = map(string)
   default     = {}
@@ -220,7 +277,7 @@ variable "backup_max_age_hours" {
 
   validation {
     condition     = var.backup_max_age_hours >= 1 && var.backup_max_age_hours <= 24
-    error_message = "backup_max_age_hours must be between 1 and 24: the alarm period is this value in seconds, and CloudWatch caps an alarm period at 86400."
+    error_message = "backup_max_age_hours must be between 1 and 24. The alarm's evaluation window is Period x EvaluationPeriods, here the value in hours converted to seconds, and CloudWatch caps that product at 86400."
   }
 }
 
@@ -255,6 +312,12 @@ variable "canaries" {
     schedule_expression = optional(string, "rate(5 minutes)")
     timeout_seconds     = optional(number, 60)
     active_tracing      = optional(bool, true)
+
+    # Alarm period. Defaults to the canary's own interval, because a period shorter
+    # than the schedule leaves most periods empty and, with missing data treated as
+    # breaching, holds the alarm in ALARM while the canary is passing. Set this
+    # explicitly for a cron() schedule, which cannot be decomposed here.
+    alarm_period_seconds = optional(number)
   }))
   default = {}
 }

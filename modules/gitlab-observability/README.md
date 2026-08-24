@@ -72,16 +72,34 @@ metrics charge on that prefix.
 
 ## Two things it refuses
 
-`/-/health` as a load balancer health check. GitLab's documentation warns against
-this explicitly: the endpoint fails whenever any backend dependency is slow, so a
-transient database slowdown pulls every healthy node out of the pool and turns a
-degradation into an outage. The load balancer becomes an amplifier of small problems.
-Use `/-/readiness`, which is the default.
+`/-/health` as a load balancer health check. It is the *shallow* endpoint: it
+reports that the application server is running and nothing more, so a node whose
+database has gone away still passes and keeps receiving traffic. `/-/readiness` is
+the one GitLab recommends for load balancing, and it is the default here.
+
+The opposite mistake is worth naming in the same breath, because it is what people
+reach for after learning the first one. `/-/readiness?all=1` checks every shared
+backend dependency, so a single slow database makes every node report unready at
+once and the load balancer drains the whole pool. That endpoint belongs in a
+monitoring check, never in a target group.
+
+This module creates no load balancer, so the value is validated and re-exported for
+the caller's target group rather than attached to anything here.
 
 Disk and memory alarms without the CloudWatch agent. EC2 publishes neither metric
-on its own. Creating the alarms anyway produces alarms stuck in `INSUFFICIENT_DATA`
-forever, which on a dashboard is indistinguishable from healthy. Set
-`cloudwatch_agent_installed = true` once the agent is actually running.
+on its own. The usual objection is that such an alarm sits in `INSUFFICIENT_DATA`
+forever, but that is not what happens here: every alarm in this module treats
+missing data as breaching, so an alarm on a metric nobody publishes goes to `ALARM`
+on its first evaluation and pages continuously while nothing is wrong. That is
+worse than a silent gap, because it is how a team learns to ignore the alarm that
+later matters. Set `cloudwatch_agent_installed = true` once the agent is running.
+
+The same trap applies one level down, to the *dimensions*. CloudWatch matches an
+alarm on its exact dimension set, and a default agent config publishes
+`disk_used_percent` under `path`, `device` and `fstype` as well as `InstanceId`.
+Either configure the agent with
+`aggregation_dimensions = [["InstanceId","path"]]`, or set `disk_metric_dimensions`
+to whatever it does publish.
 
 ## Silence is a failure mode
 
@@ -111,5 +129,5 @@ populated one is a to-do rather than a surprise during an incident.
 ## Tests
 
 ```bash
-terraform init && terraform test    # 12 tests, mocked provider, no AWS account
+terraform init && terraform test    # 20 tests, mocked provider, no AWS account
 ```

@@ -117,16 +117,77 @@ run "no_stage_named_leaves_the_domain_name_unmapped" {
   }
 }
 
-run "refuses_to_create_a_private_zone_for_a_public_suffix" {
+run "the_private_zone_is_the_hostname_not_its_parent" {
+  command = apply
+
+  # Creating example.com privately to answer for api.example.com makes Route 53
+  # Resolver serve EVERY *.example.com query in the VPC from this zone, returning
+  # NXDOMAIN for every name it does not contain. It also means the second API to
+  # use this module in the same VPC fails with ConflictingDomainExists.
+  assert {
+    condition     = aws_route53_zone.private[0].name == "api.example.com"
+    error_message = "The private zone must be the hostname itself; a zone for the parent domain overrides resolution for everything beneath it inside the VPC."
+  }
+}
+
+run "refuses_to_create_a_private_zone_for_an_apex" {
   command = plan
 
   variables {
     hostname = "example.com"
   }
 
-  # zone_name drops the first label, so a two-label hostname would create a zone
-  # for "com" and answer for every name under it inside the VPC.
+  # An apex zone answers for every name beneath it inside the VPC, whichever way
+  # it is derived.
   expect_failures = [aws_route53_zone.private[0]]
+}
+
+# --------------------------------------------------------------------------
+# Private DNS on the endpoint is a VPC-wide decision
+# --------------------------------------------------------------------------
+
+run "private_dns_is_off_by_default_on_the_endpoint" {
+  command = apply
+
+  # Private DNS on an execute-api endpoint takes over *.execute-api.<region>.
+  # amazonaws.com for the WHOLE VPC, so every caller resolves every API Gateway
+  # hostname to this endpoint, including APIs still served regionally by other
+  # teams. Those calls start returning 403, which breaks the phased migration this
+  # design depends on.
+  assert {
+    condition     = aws_vpc_endpoint.execute_api[0].private_dns_enabled == false
+    error_message = "Private DNS hijacks execute-api resolution for the entire VPC; the private custom domain name is what makes it unnecessary."
+  }
+}
+
+run "private_dns_can_be_turned_on_deliberately" {
+  command = apply
+
+  variables {
+    enable_endpoint_private_dns = true
+  }
+
+  assert {
+    condition     = aws_vpc_endpoint.execute_api[0].private_dns_enabled == true
+    error_message = "The setting should remain available for a VPC where taking over execute-api resolution is intended."
+  }
+}
+
+run "the_domain_name_policy_denies_every_other_endpoint" {
+  command = apply
+
+  # An Allow on its own is not a control, by the same argument the module makes
+  # for the API's own policy one layer down: a caller arriving through another
+  # associated endpoint with an identity-based execute-api:Invoke grant is not
+  # denied by an allow it simply does not match.
+  assert {
+    condition = anytrue([
+      for s in jsondecode(aws_api_gateway_domain_name.private[0].policy).Statement :
+      s.Effect == "Deny" &&
+      try(s.Condition.StringNotEquals["aws:SourceVpce"], null) == aws_vpc_endpoint.execute_api[0].id
+    ])
+    error_message = "The domain name policy needs an explicit Deny, not only an Allow."
+  }
 }
 
 # --------------------------------------------------------------------------
@@ -241,7 +302,7 @@ run "records_can_be_held_back_for_a_separate_cutover" {
 # The four CloudFront traps
 # --------------------------------------------------------------------------
 
-run "the_viewer_host_header_is_not_forwarded_to_the_origin" {
+run "the_viewer_host_header_reaches_the_private_custom_domain_name" {
   command = apply
 
   variables {
@@ -252,15 +313,20 @@ run "the_viewer_host_header_is_not_forwarded_to_the_origin" {
     public_hosted_zone_id    = "Z0PUBLIC"
   }
 
-  # API Gateway routes on Host. Forwarding the viewer's value to an execute-api
-  # origin returns 403 on every request, and this is the single most common
-  # cause of "CloudFront in front of API Gateway returns 403".
+  # The literal AllViewer UUID, not the module's own local. Comparing a rendered
+  # attribute against the local that produced it is x == x: it passes whatever the
+  # local is changed to, so it cannot detect the mistake it is named after.
+  #
+  # AllViewer is correct HERE because the origin is an ALB fronting a private custom
+  # domain name, and API Gateway matches that domain against the Host it receives.
+  # The familiar "strip Host" rule is about an execute-api origin, which this module
+  # never has; applying it here 403s every external request.
   assert {
     condition = alltrue([
       for b in aws_cloudfront_distribution.this[0].default_cache_behavior :
-      b.origin_request_policy_id == local.origin_request_policy_all_viewer_except_host
+      b.origin_request_policy_id == "216adef6-5c7f-47e4-b989-5492eafa07d3"
     ])
-    error_message = "Use the AllViewerExceptHostHeader managed policy; forwarding Host to execute-api returns 403 on every request."
+    error_message = "The default behavior must use the AllViewer managed policy (216adef6-5c7f-47e4-b989-5492eafa07d3). Stripping Host means the private API is asked for the ALB's name, which matches no registered domain name."
   }
 }
 
@@ -286,17 +352,17 @@ run "caching_is_disabled_on_every_behavior" {
   assert {
     condition = alltrue([
       for b in aws_cloudfront_distribution.this[0].default_cache_behavior :
-      b.cache_policy_id == local.cache_policy_caching_disabled
+      b.cache_policy_id == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
     ])
-    error_message = "The default behavior must use CachingDisabled."
+    error_message = "The default behavior must use the CachingDisabled managed policy (4135ea2d-6df8-44a3-9df3-4b5a84be39ad)."
   }
 
   assert {
     condition = alltrue([
       for b in aws_cloudfront_distribution.this[0].ordered_cache_behavior :
-      b.cache_policy_id == local.cache_policy_caching_disabled
+      b.cache_policy_id == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
     ])
-    error_message = "Every ordered behavior must use CachingDisabled; one that does not is a per-caller response served to the wrong caller."
+    error_message = "Every ordered behavior must use the CachingDisabled managed policy; one that does not is a per-caller response served to the wrong caller."
   }
 }
 

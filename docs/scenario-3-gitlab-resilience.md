@@ -413,8 +413,9 @@ answer at 3-4x, with sharded Gitaly as a sensible intermediate step, because Pra
 complex enough that GitLab says so in its own documentation.
 
 On monitoring, synthetic `git clone` canaries over both HTTPS and SSH are the only checks
-that prove Git actually works. Use `/-/readiness` for the load balancer and not
-`/-/health`, which fails on slow dependencies and evicts healthy nodes. Sidekiq queue
+that prove Git actually works. Use `/-/readiness` for the load balancer: `/-/health`
+is too shallow and keeps a node that cannot serve in rotation, while `?all=1` is too
+deep and drains every node at once on one slow dependency. Sidekiq queue
 latency is the earliest predictive signal available. The CloudWatch agent is mandatory,
 since EC2 publishes neither memory nor disk. And every critical alarm needs
 `treat_missing_data = "breaching"`, because a dead host stops publishing and the alarm

@@ -732,3 +732,19 @@ run "rejects_a_managed_only_field_on_an_external_destination" {
 
   expect_failures = [var.copy_destinations]
 }
+
+run "rejects_a_staleness_window_longer_than_a_cloudwatch_alarm_can_look_back" {
+  command = plan
+
+  variables {
+    staleness_alarm_period_hours = 26
+  }
+
+  # 26 is the number this wants to be, since a daily plan with a start window can
+  # legitimately land more than 24 hours after the previous run. It is not
+  # available: a CloudWatch alarm's evaluation window is Period x EvaluationPeriods
+  # and that product is capped at 86400 seconds, so no arrangement of a metric
+  # alarm looks back further than one day. Beyond that the lookback has to move
+  # into a custom metric.
+  expect_failures = [var.staleness_alarm_period_hours]
+}

@@ -30,7 +30,15 @@ locals {
 
   # Alarms that depend on the CloudWatch agent. EC2 publishes neither memory nor
   # disk usage on its own, so without the agent these reference metrics that will
-  # never exist and sit in INSUFFICIENT_DATA forever, which reads as healthy.
+  # never exist.
+  #
+  # Worth being precise about what that costs, because the usual phrasing is
+  # wrong for this module. An alarm on a metric nobody publishes sits in
+  # INSUFFICIENT_DATA only while missing data is treated as missing. Every alarm
+  # here treats it as breaching, on purpose, so the same alarm goes to ALARM on
+  # the first evaluation and pages forever. That is worse than a silent gap: it
+  # is a page nobody can act on, which is how a team learns to ignore the alarm
+  # that later matters.
   agent_alarms_enabled = var.cloudwatch_agent_installed
 
   disk_levels = {
@@ -41,11 +49,54 @@ locals {
 
   # A CloudWatch alarm matches a metric only on an exact dimension set. An alarm
   # with no dimensions therefore watches the zero-dimension metric, which is not
-  # the one anything publishes, and it sits in INSUFFICIENT_DATA forever. That is
-  # the same defect this module refuses to commit for disk and memory, so the
-  # GitLab-sourced alarms get a dimension set too.
+  # the one anything publishes: combined with treat_missing_data = "breaching" it
+  # pages continuously while nothing is wrong. That is the same defect this module
+  # refuses to commit for disk and memory, so the GitLab-sourced alarms get a
+  # dimension set too.
   gitlab_dimensions = length(var.gitlab_metric_dimensions) > 0 ? var.gitlab_metric_dimensions : {
     InstanceId = var.instance_id
+  }
+
+  # The CloudWatch agent publishes disk_used_percent with the full dimension set it
+  # collected under: path, device and fstype, plus whatever append_dimensions adds
+  # (InstanceId, ImageId, InstanceType by default). CloudWatch matches an alarm on
+  # the EXACT set, so {InstanceId, path} matches nothing a default agent config
+  # emits, and because these alarms treat missing data as breaching the result is
+  # not a quiet alarm: it is three disk alarms in ALARM from the first minute,
+  # paging forever, which trains everyone to ignore them.
+  #
+  # The agent has to be told to publish this set, with
+  # aggregation_dimensions = [["InstanceId","path"]] for disk and [["InstanceId"]]
+  # for memory. These variables exist so the alarms can be matched to an agent
+  # configured differently rather than silently missing it.
+  disk_dimensions = length(var.disk_metric_dimensions) > 0 ? var.disk_metric_dimensions : {
+    InstanceId = var.instance_id
+    path       = var.repository_volume_path
+  }
+
+  memory_dimensions = length(var.memory_metric_dimensions) > 0 ? var.memory_metric_dimensions : {
+    InstanceId = var.instance_id
+  }
+
+  # A canary alarm's period has to be at least the canary's own interval, or most
+  # periods contain no run at all. Parsed from rate(N unit); a cron() schedule is
+  # not decomposable here, so those fall back to the declared default and the
+  # caller can override it.
+  canary_rate_seconds = {
+    for k, c in var.canaries : k => (
+      can(regex("^rate\\((\\d+) (minute|minutes|hour|hours)\\)$", c.schedule_expression))
+      ? tonumber(regex("^rate\\((\\d+) ", c.schedule_expression)[0]) *
+      (strcontains(c.schedule_expression, "hour") ? 3600 : 60)
+      : null
+    )
+  }
+
+  canary_periods = {
+    for k, c in var.canaries : k => coalesce(
+      c.alarm_period_seconds,
+      local.canary_rate_seconds[k],
+      300,
+    )
   }
 }
 
@@ -132,7 +183,11 @@ resource "aws_cloudwatch_metric_alarm" "canary_failed" {
     CanaryName = aws_synthetics_canary.this[each.key].name
   }
 
-  period              = 300
+  # Derived from the canary's own schedule, not fixed at five minutes. A canary on
+  # rate(15 minutes) leaves two of every three 5-minute periods empty, and with
+  # missing data treated as breaching that alarm is in ALARM permanently while the
+  # canary is passing.
+  period              = local.canary_periods[each.key]
   evaluation_periods  = 2
   datapoints_to_alarm = 2
   threshold           = 100
@@ -188,10 +243,7 @@ resource "aws_cloudwatch_metric_alarm" "repository_disk" {
   namespace   = var.cloudwatch_agent_namespace
   metric_name = "disk_used_percent"
   statistic   = "Maximum"
-  dimensions = {
-    InstanceId = var.instance_id
-    path       = var.repository_volume_path
-  }
+  dimensions  = local.disk_dimensions
 
   period              = 300
   evaluation_periods  = 2
@@ -217,9 +269,7 @@ resource "aws_cloudwatch_metric_alarm" "memory" {
   namespace   = var.cloudwatch_agent_namespace
   metric_name = "mem_used_percent"
   statistic   = "Average"
-  dimensions = {
-    InstanceId = var.instance_id
-  }
+  dimensions  = local.memory_dimensions
 
   period              = 300
   evaluation_periods  = 3
