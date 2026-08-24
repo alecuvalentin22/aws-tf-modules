@@ -78,6 +78,12 @@ was found and what changed.
 
 ---
 
+## Operations
+
+[`runbooks/backup-restore.md`](runbooks/backup-restore.md) — restoring from the backup
+policy, including which of the three copies to use and why that choice is not
+interchangeable.
+
 ## Decision records
 
 | ADR | Decision |
