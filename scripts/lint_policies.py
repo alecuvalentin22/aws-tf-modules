@@ -14,8 +14,8 @@ This closes that gap. It renders the policies from an actual `terraform plan`
 and runs them through `parliament`, which knows AWS's action and condition-key
 catalogue.
 
-A linter that reports "clean" is worthless unless you know it can report
-anything else. So before looking at the real policies, this script runs three
+A linter reporting "clean" carries no information unless it is known to be
+capable of reporting something else. So before looking at the real policies, this script runs three
 deliberately broken fixtures through the same code path and FAILS if any of
 them comes back clean. A dependency change that defanged the linter
 would otherwise turn this into a green check that verifies nothing.
@@ -308,7 +308,7 @@ def main() -> int:
             rendered = render_policies(workdir, scenario, tfvars)
             print(f"  scenario {scenario}: {len(rendered)} policies rendered")
             for label, body in rendered.items():
-                # Both scenarios render some of the same policies; keep one copy.
+                # The scenarios overlap; keep one copy of each policy.
                 policies.setdefault(label, body)
     finally:
         if not args.keep:

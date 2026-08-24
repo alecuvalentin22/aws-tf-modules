@@ -70,7 +70,7 @@ output "unchecked_copy_destinations" {
     Always empty unless `acknowledge_unchecked_copy_destinations` is true, because otherwise
     the plan refuses. Surfaced so the gap in the module's headline guarantee stays visible.
   EOT
-  value       = local.unchecked_copy_destinations_out
+  value       = local.unchecked_destinations
 }
 
 output "unvalidated_retention_targets" {

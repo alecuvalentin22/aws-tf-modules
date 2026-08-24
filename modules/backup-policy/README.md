@@ -176,7 +176,7 @@ or destination, and every one has a test proving it fires.
 | `copy_retention` for a destination not in `copy_to` | Silently ignored otherwise |
 | An empty `selection_required_tags` | `resources = ["*"]` with no condition backs up the whole account |
 | An external destination with no declared lock window | Its retention cannot be checked; failing open on the cross-account hop, with no signal, defeats the guardrail. Waivable with `acknowledge_unchecked_copy_destinations`, and reported either way |
-| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied. **Not** waivable - it is a different failure from the one above, and sharing an escape hatch meant an unlocked sandbox Region switched this off too |
+| An external destination with no `kms_key_arn_external` | The backup role could not be granted the destination key, so every encrypted copy would fail with AccessDenied. **Not** waivable - it is a different failure from the one above, and a shared escape hatch would let an unlocked sandbox Region switch this off too |
 | A field that applies only to the other kind of destination | A setting that appears to take effect and does not is worse than one that is refused |
 | `disable_cold_storage` together with `cold_storage_after` | Contradictory |
 | `vault_force_destroy` with a deny-delete policy that exempts nobody | `destroy` would fail with AccessDenied and nothing would say which setting caused it |
@@ -235,11 +235,11 @@ Support. [ADR-0001](../../docs/adr/0001-vault-lock-compliance-mode.md).
 ## Testing
 
 ```bash
-cd modules/backup-policy && terraform init && terraform test                       # 63 tests
+cd modules/backup-policy && terraform init && terraform test                       # 64 tests
 cd modules/backup-policy/modules/backup-vault && terraform init && terraform test  # 20 tests
 ```
 
-All 83 run against a **mocked provider**: no AWS account, no credentials, so they work
+All 84 run against a **mocked provider**: no AWS account, no credentials, so they work
 as a required CI check. Shared mocks live in `tests/mocks/aws.tfmock.hcl`.
 
 | File | Covers |

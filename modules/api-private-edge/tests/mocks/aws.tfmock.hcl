@@ -1,10 +1,10 @@
-# Shared provider mocks for `terraform test`.
+# Provider mocks for `terraform test`.
 #
 # Two reasons these defaults exist rather than letting Terraform generate values:
 #
 #   1. The AWS provider validates several attributes client-side. A generated
-#      random string for a KMS key ARN or an SNS topic ARN fails that validation
-#      before any assertion runs.
+#      random string fails that validation before any assertion runs, so anything
+#      parsed as an ARN or an endpoint ID has to be well-formed here.
 #   2. Identity data sources feed interpolated ARNs throughout the module. Pinning
 #      them keeps rendered policies readable when a test fails.
 
@@ -35,64 +35,16 @@ mock_data "aws_region" {
   }
 }
 
-mock_data "aws_iam_policy_document" {
-  defaults = {
-    json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
-  }
-}
-
-mock_resource "aws_kms_key" {
-  defaults = {
-    arn    = "arn:aws:kms:eu-central-1:111111111111:key/00000000-0000-0000-0000-000000000000"
-    key_id = "00000000-0000-0000-0000-000000000000"
-  }
-}
-
-mock_resource "aws_sns_topic" {
-  defaults = {
-    arn = "arn:aws:sns:eu-central-1:111111111111:mock-topic"
-    id  = "arn:aws:sns:eu-central-1:111111111111:mock-topic"
-  }
-}
-
-# The provider validates vault ARNs client-side (include_vaults accepts only a
-# real ARN or "*"), so this has to be a well-formed value rather than a
-# generated one. The consequence is that all mocked vaults share an ARN, so
-# tests assert on the module's own lists rather than on set-typed attributes
-# where identical values would collapse into one.
-mock_resource "aws_backup_vault" {
-  defaults = {
-    arn = "arn:aws:backup:eu-central-1:111111111111:backup-vault:mock-vault"
-  }
-}
-
-mock_resource "aws_backup_plan" {
-  defaults = {
-    arn     = "arn:aws:backup:eu-central-1:111111111111:backup-plan:00000000-0000-0000-0000-000000000000"
-    id      = "00000000-0000-0000-0000-000000000000"
-    version = "bW9jaw=="
-  }
-}
-
-mock_resource "aws_iam_role" {
-  defaults = {
-    arn       = "arn:aws:iam::111111111111:role/mock-backup-role"
-    unique_id = "AROAEXAMPLE"
-  }
-}
-
-mock_resource "aws_backup_framework" {
-  defaults = {
-    arn = "arn:aws:backup:eu-central-1:111111111111:framework:mock-framework"
-  }
-}
-
 mock_resource "aws_vpc_endpoint" {
   defaults = {
     id = "vpce-0123456789abcdef0"
   }
 }
 
+# One entry only, and it is the Region-wide name. A real endpoint also publishes
+# a zonal name per AZ, which is what the module's shortest-name selection exists
+# to distinguish; the test for that reads the module's own logic rather than
+# relying on mock ordering.
 mock_data "aws_vpc_endpoint" {
   defaults = {
     id = "vpce-0123456789abcdef0"
@@ -117,6 +69,15 @@ mock_resource "aws_api_gateway_rest_api" {
   }
 }
 
+# The provider parses domain_name_arn client-side before the access association
+# is planned, so a generated value fails before any assertion runs.
+mock_resource "aws_api_gateway_domain_name" {
+  defaults = {
+    arn            = "arn:aws:apigateway:eu-central-1:111111111111:/domainnames/api.example.com+abcd1234"
+    domain_name_id = "abcd1234"
+  }
+}
+
 mock_resource "aws_cloudfront_distribution" {
   defaults = {
     id             = "E1MOCKDIST"
@@ -129,14 +90,5 @@ mock_resource "aws_cloudfront_distribution" {
 mock_resource "aws_route53_zone" {
   defaults = {
     zone_id = "Z0987654321XYZ"
-  }
-}
-
-# The provider parses domain_name_arn client-side before the access association
-# is planned, so a generated value fails before any assertion runs.
-mock_resource "aws_api_gateway_domain_name" {
-  defaults = {
-    arn            = "arn:aws:apigateway:eu-central-1:111111111111:/domainnames/api.example.com+abcd1234"
-    domain_name_id = "abcd1234"
   }
 }

@@ -113,7 +113,7 @@ concentration of risk.
 Two changes, and the second is what makes the first cheap:
 
 1. **Make the APIs private.** Convert internal API Gateways to `PRIVATE` endpoint
-   type, reached through a **VPC interface endpoint for `execute-api` (PrivateLink)`**,
+   type, reached through a **VPC interface endpoint for `execute-api` (PrivateLink)**,
    with a resource policy that permits only that endpoint.
 2. **Split-horizon DNS.** A private Route 53 hosted zone for the same hostname,
    resolving to the interface endpoint from inside the VPC. The public zone continues

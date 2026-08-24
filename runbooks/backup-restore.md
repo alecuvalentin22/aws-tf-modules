@@ -33,7 +33,7 @@ first, then continue triage.
 
 ```bash
 PLAN=platform-backup
-VAULT=$(terraform output -raw -state=... primary_vault_arn 2>/dev/null || echo "$PLAN-primary")
+VAULT=$(terraform output -raw primary_vault_arn 2>/dev/null || echo "$PLAN-primary")
 
 # What is in the vault, newest first.
 aws backup list-recovery-points-by-backup-vault \

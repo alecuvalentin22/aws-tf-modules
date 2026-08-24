@@ -50,7 +50,7 @@ cannot read a Vault Lock in another account, so the caller supplies
 **error** unless `acknowledge_unchecked_copy_destinations` is set, and the
 `unvalidated_retention_targets` output names the omission either way.
 
-An earlier version skipped the check with no diagnostic. That was wrong in a specific way worth
+Skipping the check with no diagnostic would be wrong in a specific way worth
 recording: it made the module's headline guarantee inoperative on precisely the hop with
 the least visibility and the strictest lock, with no signal anywhere. Failing open is
 sometimes the right default; failing open *silently*, on a guardrail whose entire value

@@ -329,7 +329,7 @@ run "rejects_a_malformed_external_vault_arn" {
 }
 
 # --------------------------------------------------------------------------
-# Regression tests for defects found in review.
+# Ways a retention guarantee can report success while checking nothing.
 #
 # Each of these was a way for the module's headline guarantee, "retention is
 # validated against the destination's Vault Lock window at plan time", to
@@ -337,10 +337,11 @@ run "rejects_a_malformed_external_vault_arn" {
 # guardrail, because it is trusted.
 # --------------------------------------------------------------------------
 
-# The primary vault's lock window used to be merged into the same map as the
-# copy destinations under a "__primary__" sentinel key, and the destination-key
-# regex permitted that exact string. A destination so named overwrote the
-# primary vault's window, and its retention check then passed for any value.
+# Merging the primary vault's lock window into the same map as the copy
+# destinations, under a "__primary__" sentinel key, would fail open: the
+# destination-key regex permits that exact string, so a destination named
+# "__primary__" overwrites the primary window and its retention check then
+# passes for any value. The two windows are kept in separate maps instead.
 #
 # The primary window now lives in its own local, so the collision is structurally
 # impossible rather than merely discouraged. This asserts the check fires: the
@@ -379,8 +380,8 @@ run "a_destination_cannot_impersonate_the_primary_vault" {
 }
 
 # An external destination whose lock window is not declared cannot be checked.
-# That used to be a silent skip, on the one hop with the least visibility and
-# the strictest lock. It is now an error unless explicitly acknowledged.
+# Skipping it silently would fail open on the one hop with the least visibility
+# and the strictest lock, so it is an error unless explicitly acknowledged.
 run "rejects_an_external_destination_with_no_declared_lock_window" {
   command = plan
 
@@ -456,10 +457,11 @@ run "rejects_an_external_destination_with_no_kms_key_arn" {
   expect_failures = [aws_backup_plan.this]
 }
 
-# A partial copy_retention override used to REPLACE the rule's lifecycle
-# wholesale, so `{ delete_after = 2555 }` on a rule with cold_storage_after = 90
-# produced a seven-year copy kept entirely in warm storage, roughly an order
-# of magnitude more expensive, with nothing in the plan to show it.
+# A copy_retention override is merged field by field over the rule's lifecycle,
+# not substituted for it. Replacing it wholesale would mean `{ delete_after =
+# 2555 }` on a rule with cold_storage_after = 90 produces a seven-year copy kept
+# entirely in warm storage, roughly an order of magnitude more expensive, with
+# nothing in the plan to show it.
 run "a_partial_copy_retention_override_inherits_the_rest_of_the_lifecycle" {
   command = apply
 
@@ -552,13 +554,13 @@ run "rejects_continuous_backup_with_copies_unless_acknowledged" {
 }
 
 # --------------------------------------------------------------------------
-# Regression tests for the second review pass.
+# Guards that must stay independent of one another.
 # --------------------------------------------------------------------------
 
-# The two acknowledgements used to share one flag. An ordinary sandbox, one
-# copy Region with its lock deliberately off, forced that flag on, and it then
-# waived the unrelated cross-account KMS requirement, re-opening the
-# gap that guard exists to close.
+# The two acknowledgements are separate flags on purpose. Sharing one would mean
+# an ordinary sandbox, a single copy Region with its lock deliberately off,
+# forces that flag on and thereby waives the unrelated cross-account KMS
+# requirement, re-opening the gap that guard exists to close.
 run "an_unlocked_sandbox_region_does_not_require_an_acknowledgement" {
   command = apply
 
@@ -616,9 +618,9 @@ run "the_kms_requirement_cannot_be_waived_by_the_lock_acknowledgement" {
   expect_failures = [aws_backup_plan.this]
 }
 
-# A disabled lock on the vault every backup job writes to FIRST used to be the
-# one omission that appeared nowhere at all, while the same state on a copy
-# destination was a hard error. That asymmetry is the reverse of the risk order.
+# A disabled lock on the vault every backup job writes to FIRST is reported,
+# because leaving it silent while the same state on a copy destination is a hard
+# error would invert the risk order.
 run "a_disabled_lock_on_the_primary_vault_is_reported" {
   command = apply
 

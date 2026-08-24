@@ -169,7 +169,7 @@ locals {
           }
         ],
         [
-          # Restated from the pre-jsonencode version of this policy.
+          # SNS's default topic policy does not deny insecure transport.
           {
             Sid       = "DenyInsecureTransport"
             Effect    = "Deny"

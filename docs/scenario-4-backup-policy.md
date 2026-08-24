@@ -203,7 +203,7 @@ modules/backup-policy/
 +-- restore-testing.tf        restore testing plan and selections
 +-- audit.tf                  Audit Manager framework and reports
 +-- examples/{minimal,complete}/
-+-- tests/                    63 tests, mocked provider, no AWS account needed
++-- tests/                    64 tests, mocked provider, no AWS account needed
 ```
 
 Terraform cannot iterate over provider configurations. That single constraint is
@@ -236,7 +236,7 @@ require it.
 
 ## Testing
 
-83 tests across the two modules, all against a **mocked provider** - no AWS account,
+84 tests across the two modules, all against a **mocked provider** - no AWS account,
 no credentials, so they run as a required check in CI:
 
 The breakdown by file is in the module README. The guardrail suite is the one worth
@@ -248,7 +248,7 @@ can be tested at all. A mocked provider cannot compute a data source, so a polic
 that way renders as an empty placeholder and nothing in it is checked, including the four
 grants that decide whether a cross-account copy works.
 
-Two tests caught real bugs during development:
+Two tests cover failures `terraform validate` cannot see:
 
 - `count` derived from an SNS topic ARN that is unknown until apply - which would have
   failed the **very first** `terraform plan` in a fresh account, and never after.

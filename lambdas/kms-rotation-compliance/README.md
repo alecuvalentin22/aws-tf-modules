@@ -74,7 +74,7 @@ python3 -m unittest discover -s lambdas/kms-rotation-compliance/tests \
                              -t lambdas/kms-rotation-compliance -v
 ```
 
-28 tests, no boto3, no credentials, no network. The decision logic takes its AWS access
+36 tests, no boto3, no credentials, no network. The decision logic takes its AWS access
 through injected callables, which is what makes every branch reachable from a plain
 unittest run, including the cross-account failure path and both sides of the policy
 boundary. A Config rule whose logic can only be exercised by deploying it is

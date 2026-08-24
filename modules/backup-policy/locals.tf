@@ -125,8 +125,7 @@ locals {
     },
   )
 
-  # Two different things get conflated if you are not careful, and only one of
-  # them is a problem:
+  # Two different things are easily conflated, and only one of them is a problem:
   #
   #   Deliberately not locked:  lock.enabled = false on a vault this module can
   #                               see. There is no window to check because the
@@ -138,7 +137,7 @@ locals {
   # Only the second requires acknowledgement. Making the first require it too
   # meant an ordinary sandbox, one unlocked copy Region, forced the
   # acknowledgement flag on, and that flag then waived unrelated checks.
-  undeclared_external_windows = sort([
+  unchecked_destinations = sort([
     for k, d in local.external_destinations : k
     if d.lock_min_retention_days == null && d.lock_max_retention_days == null
   ])
@@ -154,13 +153,9 @@ locals {
       if !w.enabled && contains(keys(local.managed_destinations), k)
     ],
     [
-      for k in local.undeclared_external_windows : "${k} (external, lock window not declared)"
+      for k in local.unchecked_destinations : "${k} (external, lock window not declared)"
     ],
   ))
-
-  # Kept for the precondition and for the output's original name.
-  unchecked_destinations          = local.undeclared_external_windows
-  unchecked_copy_destinations_out = local.undeclared_external_windows
 
   # External destinations whose KMS key ARN was not supplied. Only material when
   # this module builds the backup role, a caller supplying their own role owns
